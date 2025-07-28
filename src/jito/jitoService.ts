@@ -27,7 +27,7 @@ export class JitoBundler {
   private JitoFeeWallet: PublicKey;
 
   constructor(
-    private readonly jitoFee: string = "50000000", // 0.05 SOL
+    private readonly jitoFee: string = "5000000", // 0.005 SOL
     private readonly connection: Connection
   ) {
     this.JitoFeeWallet = this.getRandomValidatorKey();

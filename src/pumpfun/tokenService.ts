@@ -7,7 +7,7 @@ import {
   TransactionInstruction,
 } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
-import { AnchorProvider, web3, utils } from "@coral-xyz/anchor";
+import { AnchorProvider, utils, web3 } from "@coral-xyz/anchor";
 import bs58 from "bs58";
 import { PinataSDK } from "pinata";
 import { JitoBundler } from "../jito/jitoService";
@@ -17,15 +17,14 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export class TokenService {
-  private connection: Connection;
-  private jitoBundler: JitoBundler;
-  private programId: PublicKey = new PublicKey(
+  private readonly connection: Connection;
+  private readonly jitoBundler: JitoBundler;
+  private readonly programId: PublicKey = new PublicKey(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
   );
-  private readonly DECIMALS = 6; // PumpFun standard: 6 decimals
-  private provider: AnchorProvider;
-  private metadataCache: Map<string, string> = new Map();
-  private pinata: PinataSDK;
+  private readonly DECIMALS: number = 6;
+  private readonly provider: AnchorProvider;
+  private readonly pinata: PinataSDK;
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
     BONDING_CURVE: utils.bytes.utf8.encode("bonding-curve"),
@@ -73,311 +72,49 @@ export class TokenService {
     });
   }
 
-  async createPumpFunToken(req: any): Promise<any> {
+  async createPumpFunToken(req: TokenCreationRequest): Promise<{
+    success: boolean;
+    signature?: string;
+    error?: string;
+  }> {
     try {
-      if (
-        !req.name ||
-        !req.symbol ||
-        !req.creatorKeypair ||
-        (!req.uri && !req.imageBuffer)
-      ) {
-        throw new Error(
-          "Missing required fields: name, symbol, creatorKeypair, and either uri or image file"
-        );
-      }
-
-      if (req.name.length > 32)
-        throw new Error("Name must be 32 characters or less");
-      if (req.symbol.length > 8)
-        throw new Error("Symbol must be 8 characters or less");
-      if (req.uri && req.uri.length > 200)
-        throw new Error("URI must be 200 characters or less");
-      if (req.imageBuffer && req.imageBuffer.length > 1_000_000)
-        throw new Error(
-          "Image file must be less than 1MB for Pinata free tier"
-        );
-
-      if (req.external_url && !/^(https?:\/\/)/.test(req.external_url)) {
-        throw new Error("external_url must be a valid URL");
-      }
-
-      let creatorKeypair: Keypair;
-      try {
-        const secretKey = bs58.decode(req.creatorKeypair);
-        if (secretKey.length !== 64)
-          throw new Error("Invalid creatorKeypair: must be 64 bytes");
-        creatorKeypair = Keypair.fromSecretKey(secretKey);
-      } catch {
-        throw new Error(
-          "Invalid creatorKeypair: must be base58-encoded private key"
-        );
-      }
-
-      let tokenMint: Keypair;
-      let bondingCurve: PublicKey;
-      let associatedBondingCurve: PublicKey;
-      let metadata: PublicKey;
-      let attempts = 0;
-      const maxAttempts = 20;
-      let bondingCurveInfo;
-      let associatedBondingCurveInfo;
-      let mintAccountInfo;
-      let metadataInfo;
-
-      do {
-        if (attempts >= maxAttempts) {
-          throw new Error(
-            "Failed to find unused mint, bonding curve, or metadata accounts after maximum attempts"
-          );
-        }
-
-        tokenMint = Keypair.generate();
-        bondingCurve = web3.PublicKey.findProgramAddressSync(
-          [this.SEEDS.BONDING_CURVE, tokenMint.publicKey.toBuffer()],
-          this.programId
-        )[0];
-        associatedBondingCurve = web3.PublicKey.findProgramAddressSync(
-          [
-            bondingCurve.toBuffer(),
-            this.SEEDS.ASSOCIATED_BONDING_CURVE_CONSTANT,
-            tokenMint.publicKey.toBuffer(),
-          ],
-          new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-        )[0];
-        metadata = web3.PublicKey.findProgramAddressSync(
-          [
-            utils.bytes.utf8.encode("metadata"),
-            this.SEEDS.METADATA_CONSTANT,
-            tokenMint.publicKey.toBuffer(),
-          ],
-          new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
-        )[0];
-
-        // Check if accounts already exist
-        mintAccountInfo = await this.connection.getAccountInfo(
-          tokenMint.publicKey
-        );
-        bondingCurveInfo = await this.connection.getAccountInfo(bondingCurve);
-        associatedBondingCurveInfo = await this.connection.getAccountInfo(
-          associatedBondingCurve
-        );
-        metadataInfo = await this.connection.getAccountInfo(metadata);
-        attempts++;
-      } while (
-        mintAccountInfo !== null ||
-        bondingCurveInfo !== null ||
-        associatedBondingCurveInfo !== null ||
-        metadataInfo !== null
-      );
-
+      this.validateRequest(req);
+      const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
+      const { tokenMint, bondingCurve, associatedBondingCurve, metadata } =
+        await this.findAvailableAccounts();
       const uri = req.uri || (await this.uploadMetadata(req));
-
       const latestBlockhash = await this.connection.getLatestBlockhash(
         "confirmed"
       );
-
       const pumpFunInstruction = await this.createPumpFunInstruction(
         tokenMint.publicKey,
         creatorKeypair.publicKey,
         { ...req, uri }
       );
-
       const transaction = new Transaction().add(pumpFunInstruction);
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
-      transaction.sign(tokenMint, creatorKeypair); // Sign with both tokenMint and creatorKeypair
-
-      // Re-check accounts just before submission to avoid race conditions
-      const recheckAccounts = await Promise.all([
-        this.connection.getAccountInfo(tokenMint.publicKey),
-        this.connection.getAccountInfo(bondingCurve),
-        this.connection.getAccountInfo(associatedBondingCurve),
-        this.connection.getAccountInfo(metadata),
-      ]);
-
-      if (recheckAccounts.some((info) => info !== null)) {
-        throw new Error(
-          `One or more accounts became occupied before transaction submission: ` +
-            `Mint: ${tokenMint.publicKey.toBase58()}, ` +
-            `BondingCurve: ${bondingCurve.toBase58()}, ` +
-            `AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, ` +
-            `Metadata: ${metadata.toBase58()}`
-        );
-      }
-
-      // Log account addresses and transaction details for debugging
-      console.log("Creator Public Key:", creatorKeypair.publicKey.toBase58());
-      console.log("Mint Address:", tokenMint.publicKey.toBase58());
-      console.log("Bonding Curve Address:", bondingCurve.toBase58());
-      console.log(
-        "Associated Bonding Curve Address:",
-        associatedBondingCurve.toBase58()
+      transaction.sign(tokenMint, creatorKeypair);
+      await this.recheckAccounts(
+        tokenMint.publicKey,
+        bondingCurve,
+        associatedBondingCurve,
+        metadata
       );
-      console.log("Metadata Address:", metadata.toBase58());
-      console.log(
-        "Creator Balance:",
-        (await this.connection.getBalance(creatorKeypair.publicKey)) /
-          web3.LAMPORTS_PER_SOL,
-        "SOL"
-      );
-      console.log(
-        "Transaction (Base64):",
-        transaction
-          .serialize({ requireAllSignatures: false })
-          .toString("base64")
-      );
-
-      // Log account states before transaction
-      console.log(
-        "Mint Account Before:",
-        await this.connection.getAccountInfo(tokenMint.publicKey)
-      );
-      console.log(
-        "Bonding Curve Account Before:",
-        await this.connection.getAccountInfo(bondingCurve)
-      );
-      console.log(
-        "Associated Bonding Curve Account Before:",
-        await this.connection.getAccountInfo(associatedBondingCurve)
-      );
-      console.log(
-        "Metadata Account Before:",
-        await this.connection.getAccountInfo(metadata)
-      );
-
-      // Simulate the transaction for debugging
-      const simulationResult = await this.connection.simulateTransaction(
+      this.logTransactionDetails(
+        creatorKeypair,
+        tokenMint,
+        bondingCurve,
+        associatedBondingCurve,
+        metadata,
         transaction
       );
-      console.log(
-        "Simulation Result:",
-        JSON.stringify(simulationResult, null, 2)
-      );
-
-      if (simulationResult.value.err) {
-        throw new Error(
-          `Transaction simulation failed: ${JSON.stringify(
-            simulationResult.value.err
-          )}`
-        );
-      }
-
-      // Try Jito bundler first
-      let result;
-      try {
-        console.log("Attempting Jito bundler submission...");
-        result = await this.jitoBundler.executeAndConfirm(
-          transaction,
-          creatorKeypair,
-          latestBlockhash,
-          [tokenMint]
-        );
-        if (result.confirmed) {
-          console.log("Jito Transaction Signature:", result.signature);
-        } else {
-          console.log("Jito bundler failed:", result.error);
-        }
-      } catch (jitoError) {
-        console.error(
-          "Jito Bundler Error:",
-          JSON.stringify(jitoError, null, 2)
-        );
-        result = {
-          confirmed: false,
-          error:
-            jitoError instanceof Error
-              ? jitoError.message
-              : "Jito bundler failed",
-        };
-      }
-
-      // Fall back to direct submission if Jito fails
-      if (!result.confirmed) {
-        console.log("Falling back to direct transaction submission...");
-        const maxRetries = 3;
-        let signature;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            console.log(
-              `Direct submission attempt ${attempt}/${maxRetries}...`
-            );
-            // Refresh blockhash if necessary
-            if (attempt > 1) {
-              const newBlockhash = await this.connection.getLatestBlockhash(
-                "confirmed"
-              );
-              transaction.recentBlockhash = newBlockhash.blockhash;
-              transaction.sign(tokenMint, creatorKeypair); // Re-sign with new blockhash
-            }
-            signature = await this.connection.sendRawTransaction(
-              transaction.serialize()
-            );
-            console.log("Direct Transaction Signature:", signature);
-            const confirmation = await this.connection.confirmTransaction(
-              {
-                signature,
-                blockhash: latestBlockhash.blockhash,
-                lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-              },
-              "confirmed"
-            );
-            console.log(
-              "Direct Confirmation:",
-              JSON.stringify(confirmation, null, 2)
-            );
-            if (!confirmation.value.err) {
-              result = { confirmed: true, signature, error: undefined };
-              break;
-            } else {
-              result = {
-                confirmed: false,
-                signature,
-                error: `Direct submission failed: ${JSON.stringify(
-                  confirmation.value.err
-                )}`,
-              };
-            }
-          } catch (directError) {
-            console.error(
-              `Direct submission attempt ${attempt} failed:`,
-              directError
-            );
-            if (attempt === maxRetries) {
-              result = {
-                confirmed: false,
-                signature,
-                error:
-                  directError instanceof Error
-                    ? directError.message
-                    : "Unknown error",
-              };
-            }
-          }
-        }
-      }
-
-      // Log account states after transaction
-      console.log(
-        "Mint Account After:",
-        await this.connection.getAccountInfo(tokenMint.publicKey)
-      );
-      console.log(
-        "Bonding Curve Account After:",
-        await this.connection.getAccountInfo(bondingCurve)
-      );
-      console.log(
-        "Associated Bonding Curve Account After:",
-        await this.connection.getAccountInfo(associatedBondingCurve)
-      );
-      console.log(
-        "Metadata Account After:",
-        await this.connection.getAccountInfo(metadata)
-      );
-      console.log(
-        "Creator Balance After:",
-        (await this.connection.getBalance(creatorKeypair.publicKey)) /
-          web3.LAMPORTS_PER_SOL,
-        "SOL"
+      await this.simulateTransaction(transaction);
+      return await this.submitTransaction(
+        transaction,
+        creatorKeypair,
+        latestBlockhash,
+        tokenMint
       );
     } catch (error) {
       return {
@@ -387,69 +124,391 @@ export class TokenService {
     }
   }
 
-  private async uploadMetadata(req: any): Promise<string> {
-    const cacheKey = `${req.name}:${req.symbol}:${
-      req.imageFileName || req.uri
-    }:${req.description || ""}:${req.external_url || ""}:${JSON.stringify(
-      req.attributes || []
-    )}`;
-    if (this.metadataCache.has(cacheKey)) {
-      return this.metadataCache.get(cacheKey)!;
-    }
-
-    try {
-      // Validate Pinata configuration
-      if (!process.env.PINATA_API_KEY || !process.env.PINATA_SECRET_API_KEY) {
-        throw new Error(
-          "PINATA_API_KEY or PINATA_API_SECRET not set in environment variables"
-        );
-      }
-
-      let imageUrl: string;
-      if (req.imageBuffer && req.imageFileName) {
-        const imageFile = new File([req.imageBuffer], req.imageFileName, {
-          type: "image/png",
-        });
-        const imageUpload = await this.pinata.upload.public.file(imageFile);
-        if (!imageUpload.cid) {
-          throw new Error("Failed to upload image to Pinata IPFS");
-        }
-        imageUrl = `https://ipfs.io/ipfs/${imageUpload.cid}`;
-        console.log("Generated Image URL:", imageUrl); // Log for debugging
-      } else {
-        throw new Error("Image buffer or filename missing");
-      }
-
-      const metadata = {
-        name: req.name,
-        symbol: req.symbol,
-        description: req.description || "A Pump.fun token",
-        image: imageUrl,
-        external_url: req.external_url || "",
-        attributes: req.attributes || [],
-        properties: {
-          files: [{ uri: imageUrl, type: "image/png" }],
-          category: "image",
-        },
-      };
-
-      const metadataUpload = await this.pinata.upload.public.json(metadata);
-      if (!metadataUpload.cid) {
-        throw new Error("Failed to upload metadata JSON to Pinata IPFS");
-      }
-
-      const uri = `https://ipfs.io/ipfs/${metadataUpload.cid}`;
-      this.metadataCache.set(cacheKey, uri);
-      console.log("Generated Metadata URI:", uri); // Log for debugging
-
-      return uri;
-    } catch (error) {
+  private validateRequest(req: TokenCreationRequest): void {
+    if (
+      !req.name ||
+      !req.symbol ||
+      !req.creatorKeypair ||
+      (!req.uri && !req.imageBuffer)
+    ) {
       throw new Error(
-        `Pinata IPFS upload failed: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
+        "Missing required fields: name, symbol, creatorKeypair, and either uri or image file"
       );
     }
+    if (req.name.length > 32) {
+      throw new Error("Name must be 32 characters or less");
+    }
+    if (req.symbol.length > 8) {
+      throw new Error("Symbol must be 8 characters or less");
+    }
+    if (req.uri && req.uri.length > 200) {
+      throw new Error("URI must be 200 characters or less");
+    }
+    if (req.imageBuffer && req.imageBuffer.length > 1_000_000) {
+      throw new Error("Image file must be less than 1MB for Pinata free tier");
+    }
+    if (req.external_url && !/^(https?:\/\/)/.test(req.external_url)) {
+      throw new Error("external_url must be a valid URL");
+    }
+  }
+
+  private getCreatorKeypair(secretKeyBase58: string): Keypair {
+    const secretKey = bs58.decode(secretKeyBase58);
+    if (secretKey.length !== 64) {
+      throw new Error("Invalid creatorKeypair: must be 64 bytes");
+    }
+    return Keypair.fromSecretKey(secretKey);
+  }
+
+  private async findAvailableAccounts(): Promise<{
+    tokenMint: Keypair;
+    bondingCurve: PublicKey;
+    associatedBondingCurve: PublicKey;
+    metadata: PublicKey;
+  }> {
+    const maxAttempts = 20;
+    for (let attempts = 0; attempts < maxAttempts; attempts++) {
+      const tokenMint = Keypair.generate();
+      const bondingCurve = web3.PublicKey.findProgramAddressSync(
+        [this.SEEDS.BONDING_CURVE, tokenMint.publicKey.toBuffer()],
+        this.programId
+      )[0];
+      const associatedBondingCurve = web3.PublicKey.findProgramAddressSync(
+        [
+          bondingCurve.toBuffer(),
+          this.SEEDS.ASSOCIATED_BONDING_CURVE_CONSTANT,
+          tokenMint.publicKey.toBuffer(),
+        ],
+        new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+      )[0];
+      const metadata = web3.PublicKey.findProgramAddressSync(
+        [
+          utils.bytes.utf8.encode("metadata"),
+          this.SEEDS.METADATA_CONSTANT,
+          tokenMint.publicKey.toBuffer(),
+        ],
+        new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+      )[0];
+      const [
+        mintAccountInfo,
+        bondingCurveInfo,
+        associatedBondingCurveInfo,
+        metadataInfo,
+      ] = await Promise.all([
+        this.connection.getAccountInfo(tokenMint.publicKey),
+        this.connection.getAccountInfo(bondingCurve),
+        this.connection.getAccountInfo(associatedBondingCurve),
+        this.connection.getAccountInfo(metadata),
+      ]);
+      if (
+        !mintAccountInfo &&
+        !bondingCurveInfo &&
+        !associatedBondingCurveInfo &&
+        !metadataInfo
+      ) {
+        return { tokenMint, bondingCurve, associatedBondingCurve, metadata };
+      }
+    }
+    throw new Error(
+      "Failed to find unused mint, bonding curve, or metadata accounts after maximum attempts"
+    );
+  }
+
+  private async recheckAccounts(
+    mint: PublicKey,
+    bondingCurve: PublicKey,
+    associatedBondingCurve: PublicKey,
+    metadata: PublicKey
+  ): Promise<void> {
+    const recheckAccounts = await Promise.all([
+      this.connection.getAccountInfo(mint),
+      this.connection.getAccountInfo(bondingCurve),
+      this.connection.getAccountInfo(associatedBondingCurve),
+      this.connection.getAccountInfo(metadata),
+    ]);
+    if (recheckAccounts.some((info) => info !== null)) {
+      throw new Error(
+        `One or more accounts became occupied before transaction submission: Mint: ${mint.toBase58()}, BondingCurve: ${bondingCurve.toBase58()}, AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, Metadata: ${metadata.toBase58()}`
+      );
+    }
+  }
+
+  private async logTransactionDetails(
+    creatorKeypair: Keypair,
+    tokenMint: Keypair,
+    bondingCurve: PublicKey,
+    associatedBondingCurve: PublicKey,
+    metadata: PublicKey,
+    transaction: Transaction
+  ): Promise<void> {
+    console.log("Creator Public Key:", creatorKeypair.publicKey.toBase58());
+    console.log("Mint Address:", tokenMint.publicKey.toBase58());
+    console.log("Bonding Curve Address:", bondingCurve.toBase58());
+    console.log(
+      "Associated Bonding Curve Address:",
+      associatedBondingCurve.toBase58()
+    );
+    console.log("Metadata Address:", metadata.toBase58());
+    console.log(
+      "Creator Balance:",
+      (await this.connection.getBalance(creatorKeypair.publicKey)) /
+        web3.LAMPORTS_PER_SOL,
+      "SOL"
+    );
+    console.log(
+      "Transaction (Base64):",
+      transaction.serialize({ requireAllSignatures: false }).toString("base64")
+    );
+    console.log(
+      "Mint Account Before:",
+      await this.connection.getAccountInfo(tokenMint.publicKey)
+    );
+    console.log(
+      "Bonding Curve Account Before:",
+      await this.connection.getAccountInfo(bondingCurve)
+    );
+    console.log(
+      "Associated Bonding Curve Account Before:",
+      await this.connection.getAccountInfo(associatedBondingCurve)
+    );
+    console.log(
+      "Metadata Account Before:",
+      await this.connection.getAccountInfo(metadata)
+    );
+  }
+
+  private async simulateTransaction(transaction: Transaction): Promise<void> {
+    const simulationResult = await this.connection.simulateTransaction(
+      transaction
+    );
+    console.log(
+      "Simulation Result:",
+      JSON.stringify(simulationResult, null, 2)
+    );
+    if (simulationResult.value.err) {
+      throw new Error(
+        `Transaction simulation failed: ${JSON.stringify(
+          simulationResult.value.err
+        )}`
+      );
+    }
+  }
+
+  private async submitTransaction(
+    transaction: Transaction,
+    creatorKeypair: Keypair,
+    latestBlockhash: { blockhash: string; lastValidBlockHeight: number },
+    tokenMint: Keypair
+  ): Promise<{ success: boolean; signature?: string; error?: string }> {
+    let result: { confirmed: boolean; signature?: string; error?: string };
+    try {
+      console.log("Attempting Jito bundler submission...");
+      result = await this.jitoBundler.executeAndConfirm(
+        transaction,
+        creatorKeypair,
+        latestBlockhash,
+        [tokenMint]
+      );
+      if (result.confirmed) {
+        console.log("Jito Transaction Signature:", result.signature);
+      } else {
+        console.log("Jito bundler failed:", result.error);
+      }
+    } catch (jitoError) {
+      console.error("Jito Bundler Error:", JSON.stringify(jitoError, null, 2));
+      result = {
+        confirmed: false,
+        error:
+          jitoError instanceof Error
+            ? jitoError.message
+            : "Jito bundler failed",
+      };
+    }
+    if (!result.confirmed) {
+      result = await this.fallbackDirectSubmission(
+        transaction,
+        creatorKeypair,
+        latestBlockhash,
+        tokenMint
+      );
+    }
+    await this.logPostTransactionState(
+      tokenMint.publicKey,
+      creatorKeypair.publicKey,
+      result.signature
+    );
+    return {
+      success: result.confirmed,
+      signature: result.signature,
+      error: result.error,
+    };
+  }
+
+  private async fallbackDirectSubmission(
+    transaction: Transaction,
+    creatorKeypair: Keypair,
+    latestBlockhash: { blockhash: string; lastValidBlockHeight: number },
+    tokenMint: Keypair
+  ): Promise<{ confirmed: boolean; signature?: string; error?: string }> {
+    const maxRetries = 3;
+    let result: { confirmed: boolean; signature?: string; error?: string } = {
+      confirmed: false,
+      error: "Direct submission failed",
+    };
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Direct submission attempt ${attempt}/${maxRetries}...`);
+        if (attempt > 1) {
+          const newBlockhash = await this.connection.getLatestBlockhash(
+            "confirmed"
+          );
+          transaction.recentBlockhash = newBlockhash.blockhash;
+          transaction.sign(tokenMint, creatorKeypair);
+        }
+        const signature = await this.connection.sendRawTransaction(
+          transaction.serialize()
+        );
+        console.log("Direct Transaction Signature:", signature);
+        const confirmation = await this.connection.confirmTransaction(
+          {
+            signature,
+            blockhash: latestBlockhash.blockhash,
+            lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+          },
+          "confirmed"
+        );
+        console.log(
+          "Direct Confirmation:",
+          JSON.stringify(confirmation, null, 2)
+        );
+        if (!confirmation.value.err) {
+          return { confirmed: true, signature, error: undefined };
+        } else {
+          result = {
+            confirmed: false,
+            signature,
+            error: `Direct submission failed: ${JSON.stringify(
+              confirmation.value.err
+            )}`,
+          };
+        }
+      } catch (directError) {
+        console.error(
+          `Direct submission attempt ${attempt} failed:`,
+          directError
+        );
+        result = {
+          confirmed: false,
+          signature: result.signature,
+          error:
+            directError instanceof Error
+              ? directError.message
+              : "Unknown error",
+        };
+      }
+    }
+    return result;
+  }
+
+  private async logPostTransactionState(
+    mint: PublicKey,
+    creator: PublicKey,
+    signature?: string
+  ): Promise<void> {
+    console.log(
+      "Mint Account After:",
+      await this.connection.getAccountInfo(mint)
+    );
+    console.log(
+      "Bonding Curve Account After:",
+      await this.connection.getAccountInfo(
+        web3.PublicKey.findProgramAddressSync(
+          [this.SEEDS.BONDING_CURVE, mint.toBuffer()],
+          this.programId
+        )[0]
+      )
+    );
+    console.log(
+      "Associated Bonding Curve Account After:",
+      await this.connection.getAccountInfo(
+        web3.PublicKey.findProgramAddressSync(
+          [
+            web3.PublicKey.findProgramAddressSync(
+              [this.SEEDS.BONDING_CURVE, mint.toBuffer()],
+              this.programId
+            )[0].toBuffer(),
+            this.SEEDS.ASSOCIATED_BONDING_CURVE_CONSTANT,
+            mint.toBuffer(),
+          ],
+          new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+        )[0]
+      )
+    );
+    console.log(
+      "Metadata Account After:",
+      await this.connection.getAccountInfo(
+        web3.PublicKey.findProgramAddressSync(
+          [
+            utils.bytes.utf8.encode("metadata"),
+            this.SEEDS.METADATA_CONSTANT,
+            mint.toBuffer(),
+          ],
+          new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+        )[0]
+      )
+    );
+    console.log(
+      "Creator Balance After:",
+      (await this.connection.getBalance(creator)) / web3.LAMPORTS_PER_SOL,
+      "SOL"
+    );
+  }
+
+  private async uploadMetadata(req: TokenCreationRequest): Promise<string> {
+    if (!req.imageBuffer || !req.imageFileName) {
+      throw new Error(
+        "Image buffer and filename are required for metadata upload"
+      );
+    }
+
+    const imageFile = new File([req.imageBuffer], req.imageFileName, {
+      type: "image/png",
+    });
+    const imageUpload = await this.pinata.upload.public.file(imageFile);
+    if (!imageUpload.cid) {
+      throw new Error("Failed to upload image to Pinata IPFS");
+    }
+    const imageUrl = `https://ipfs.io/ipfs/${imageUpload.cid}`;
+
+    const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
+    const metadata = {
+      name: req.name.slice(0, 32),
+      symbol: req.symbol.slice(0, 8),
+      description: req.description || "A Pump.fun token",
+      image: imageUrl,
+      external_url: req.external_url || "",
+      attributes: req.attributes || [],
+      properties: {
+        files: [{ uri: imageUrl, type: "image/png" }],
+        category: "image",
+        creators: [
+          {
+            address: creatorKeypair.publicKey.toBase58(),
+            share: 100,
+          },
+        ],
+      },
+      seller_fee_basis_points: 0, // Add royalties (0 for none, or e.g., 500 for 5%)
+    };
+
+    const metadataUpload = await this.pinata.upload.public.json(metadata);
+    if (!metadataUpload.cid) {
+      throw new Error("Failed to upload metadata JSON to Pinata IPFS");
+    }
+
+    const uri = `https://ipfs.io/ipfs/${metadataUpload.cid}`;
+    console.log("Generated Metadata URI:", uri);
+    return uri;
   }
 
   private async createPumpFunInstruction(
@@ -490,11 +549,9 @@ export class TokenService {
       [this.SEEDS.EVENT_AUTHORITY],
       this.programId
     )[0];
-
     const nameBuffer = Buffer.from(tokenData.name);
     const symbolBuffer = Buffer.from(tokenData.symbol);
     const uriBuffer = Buffer.from(tokenData.uri || "");
-
     const data = Buffer.concat([
       discriminator,
       Buffer.from([nameBuffer.length, 0, 0, 0]),
@@ -505,7 +562,6 @@ export class TokenService {
       uriBuffer,
       creator.toBuffer(),
     ]);
-
     const accounts = [
       { pubkey: mint, isSigner: true, isWritable: true },
       { pubkey: mintAuthority, isSigner: false, isWritable: false },
@@ -534,7 +590,6 @@ export class TokenService {
       { pubkey: eventAuthority, isSigner: false, isWritable: false },
       { pubkey: this.programId, isSigner: false, isWritable: false },
     ];
-
     return new TransactionInstruction({
       keys: accounts,
       programId: this.programId,

@@ -1,10 +1,12 @@
 export interface TokenCreationRequest {
-  name: string; // Max 32 characters
-  symbol: string; // Max 8 characters
-  creatorKeypair: string; // Base58-encoded private key
-  imagePath: string; // Path to image file (e.g., ./image.png)
-  description?: string; // Optional description
-  external_url?: string; // Optional website, Twitter, Telegram, etc.
-  attributes?: Array<{ trait_type: string; value: string }>; // Optional attributes
-  uri?: string; // Optional pre-generated URI (if provided, skips metadata upload)
+  name: string;
+  symbol: string;
+  creatorKeypair: string;
+  imagePath: string;
+  description?: string;
+  imageFileName?: string;
+  imageBuffer?: Buffer;
+  external_url?: string;
+  attributes?: Array<{ trait_type: string; value: string }>;
+  uri?: string; // pre genrated uri
 }

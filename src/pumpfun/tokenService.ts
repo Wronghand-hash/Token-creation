@@ -6,16 +6,10 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
-import {
-  TOKEN_PROGRAM_ID,
-  createInitializeMintInstruction,
-  MINT_SIZE,
-  getMinimumBalanceForRentExemptMint,
-} from "@solana/spl-token";
-import { Program, AnchorProvider, web3, utils } from "@coral-xyz/anchor";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { AnchorProvider, web3, utils } from "@coral-xyz/anchor";
 import bs58 from "bs58";
 import { PinataSDK } from "pinata";
-import fs from "fs";
 import { JitoBundler } from "../jito/jitoService";
 import { TokenCreationRequest } from "./types/types";
 import dotenv from "dotenv";
@@ -32,7 +26,6 @@ export class TokenService {
   private provider: AnchorProvider;
   private metadataCache: Map<string, string> = new Map();
   private pinata: PinataSDK;
-
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
     BONDING_CURVE: utils.bytes.utf8.encode("bonding-curve"),
@@ -80,35 +73,30 @@ export class TokenService {
     });
   }
 
-  async createPumpFunToken(
-    req: TokenCreationRequest
-  ): Promise<{ success: boolean; signature?: string; error?: string }> {
+  async createPumpFunToken(req: any): Promise<any> {
     try {
       if (
         !req.name ||
         !req.symbol ||
         !req.creatorKeypair ||
-        (!req.uri && !req.imagePath)
+        (!req.uri && !req.imageBuffer)
       ) {
         throw new Error(
-          "Missing required fields: name, symbol, creatorKeypair, and either uri or imagePath"
+          "Missing required fields: name, symbol, creatorKeypair, and either uri or image file"
         );
       }
+
       if (req.name.length > 32)
         throw new Error("Name must be 32 characters or less");
       if (req.symbol.length > 8)
         throw new Error("Symbol must be 8 characters or less");
       if (req.uri && req.uri.length > 200)
         throw new Error("URI must be 200 characters or less");
-      if (req.imagePath) {
-        if (!fs.existsSync(req.imagePath))
-          req.imagePath = "../photo_2025-05-07_08-02-01.jpg";
-        const stats = fs.statSync(req.imagePath);
-        if (stats.size > 1_000_000)
-          throw new Error(
-            "Image file must be less than 1MB for Pinata free tier"
-          );
-      }
+      if (req.imageBuffer && req.imageBuffer.length > 1_000_000)
+        throw new Error(
+          "Image file must be less than 1MB for Pinata free tier"
+        );
+
       if (req.external_url && !/^(https?:\/\/)/.test(req.external_url)) {
         throw new Error("external_url must be a valid URL");
       }
@@ -124,6 +112,7 @@ export class TokenService {
           "Invalid creatorKeypair: must be base58-encoded private key"
         );
       }
+
       let tokenMint: Keypair;
       let bondingCurve: PublicKey;
       let associatedBondingCurve: PublicKey;
@@ -173,7 +162,6 @@ export class TokenService {
           associatedBondingCurve
         );
         metadataInfo = await this.connection.getAccountInfo(metadata);
-
         attempts++;
       } while (
         mintAccountInfo !== null ||
@@ -195,7 +183,6 @@ export class TokenService {
       );
 
       const transaction = new Transaction().add(pumpFunInstruction);
-
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair); // Sign with both tokenMint and creatorKeypair
@@ -282,7 +269,8 @@ export class TokenService {
         result = await this.jitoBundler.executeAndConfirm(
           transaction,
           creatorKeypair,
-          latestBlockhash
+          latestBlockhash,
+          [tokenMint]
         );
         if (result.confirmed) {
           console.log("Jito Transaction Signature:", result.signature);
@@ -325,7 +313,6 @@ export class TokenService {
               transaction.serialize()
             );
             console.log("Direct Transaction Signature:", signature);
-
             const confirmation = await this.connection.confirmTransaction(
               {
                 signature,
@@ -338,7 +325,6 @@ export class TokenService {
               "Direct Confirmation:",
               JSON.stringify(confirmation, null, 2)
             );
-
             if (!confirmation.value.err) {
               result = { confirmed: true, signature, error: undefined };
               break;
@@ -393,11 +379,6 @@ export class TokenService {
           web3.LAMPORTS_PER_SOL,
         "SOL"
       );
-      return {
-        success: result.confirmed,
-        signature: result.signature,
-        error: result.error,
-      };
     } catch (error) {
       return {
         success: false,
@@ -406,10 +387,12 @@ export class TokenService {
     }
   }
 
-  private async uploadMetadata(req: TokenCreationRequest): Promise<string> {
-    const cacheKey = `${req.name}:${req.symbol}:${req.imagePath}:${
-      req.description || ""
-    }:${req.external_url || ""}:${JSON.stringify(req.attributes || [])}`;
+  private async uploadMetadata(req: any): Promise<string> {
+    const cacheKey = `${req.name}:${req.symbol}:${
+      req.imageFileName || req.uri
+    }:${req.description || ""}:${req.external_url || ""}:${JSON.stringify(
+      req.attributes || []
+    )}`;
     if (this.metadataCache.has(cacheKey)) {
       return this.metadataCache.get(cacheKey)!;
     }
@@ -422,17 +405,20 @@ export class TokenService {
         );
       }
 
-      const imageFile = new File(
-        [fs.readFileSync(req.imagePath)],
-        `${req.symbol}.png`,
-        { type: "image/png" }
-      );
-      const imageUpload = await this.pinata.upload.public.file(imageFile);
-      if (!imageUpload.cid) {
-        throw new Error("Failed to upload image to Pinata IPFS");
+      let imageUrl: string;
+      if (req.imageBuffer && req.imageFileName) {
+        const imageFile = new File([req.imageBuffer], req.imageFileName, {
+          type: "image/png",
+        });
+        const imageUpload = await this.pinata.upload.public.file(imageFile);
+        if (!imageUpload.cid) {
+          throw new Error("Failed to upload image to Pinata IPFS");
+        }
+        imageUrl = `https://ipfs.io/ipfs/${imageUpload.cid}`;
+        console.log("Generated Image URL:", imageUrl); // Log for debugging
+      } else {
+        throw new Error("Image buffer or filename missing");
       }
-      const imageUrl = `https://ipfs.io/ipfs/${imageUpload.cid}`;
-      console.log("Generated Image URL:", imageUrl); // Log for debugging
 
       const metadata = {
         name: req.name,
@@ -455,6 +441,7 @@ export class TokenService {
       const uri = `https://ipfs.io/ipfs/${metadataUpload.cid}`;
       this.metadataCache.set(cacheKey, uri);
       console.log("Generated Metadata URI:", uri); // Log for debugging
+
       return uri;
     } catch (error) {
       throw new Error(
@@ -471,17 +458,14 @@ export class TokenService {
     tokenData: TokenCreationRequest
   ): Promise<TransactionInstruction> {
     const discriminator = Buffer.from([24, 30, 200, 40, 5, 28, 7, 119]);
-
     const mintAuthority = web3.PublicKey.findProgramAddressSync(
       [this.SEEDS.MINT_AUTHORITY],
       this.programId
     )[0];
-
     const bondingCurve = web3.PublicKey.findProgramAddressSync(
       [this.SEEDS.BONDING_CURVE, mint.toBuffer()],
       this.programId
     )[0];
-
     const associatedBondingCurve = web3.PublicKey.findProgramAddressSync(
       [
         bondingCurve.toBuffer(),
@@ -490,12 +474,10 @@ export class TokenService {
       ],
       new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
     )[0];
-
     const global = web3.PublicKey.findProgramAddressSync(
       [this.SEEDS.GLOBAL],
       this.programId
     )[0];
-
     const metadata = web3.PublicKey.findProgramAddressSync(
       [
         utils.bytes.utf8.encode("metadata"),
@@ -504,7 +486,6 @@ export class TokenService {
       ],
       new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
     )[0];
-
     const eventAuthority = web3.PublicKey.findProgramAddressSync(
       [this.SEEDS.EVENT_AUTHORITY],
       this.programId
@@ -526,7 +507,7 @@ export class TokenService {
     ]);
 
     const accounts = [
-      { pubkey: mint, isSigner: true, isWritable: true }, // Reverted to isSigner: true per IDL
+      { pubkey: mint, isSigner: true, isWritable: true },
       { pubkey: mintAuthority, isSigner: false, isWritable: false },
       { pubkey: bondingCurve, isSigner: false, isWritable: true },
       { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },

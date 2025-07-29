@@ -9,10 +9,10 @@ import {
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { AnchorProvider, utils, web3 } from "@coral-xyz/anchor";
 import bs58 from "bs58";
-import { PinataSDK } from "pinata";
 import { JitoBundler } from "../jito/jitoService";
 import { TokenCreationRequest } from "./types/types";
 import dotenv from "dotenv";
+import { PinataService } from "../pinata/index";
 
 dotenv.config();
 
@@ -24,7 +24,7 @@ export class TokenService {
   );
   private readonly DECIMALS: number = 6;
   private readonly provider: AnchorProvider;
-  private readonly pinata: PinataSDK;
+  private readonly pinataService: PinataService;
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
     BONDING_CURVE: utils.bytes.utf8.encode("bonding-curve"),
@@ -59,17 +59,7 @@ export class TokenService {
       },
       { commitment: "confirmed" }
     );
-    const pinataJwt = process.env.PINATA_JWT;
-    const pinataGateway = process.env.PINATA_GATEWAY;
-    if (!pinataJwt || !pinataGateway) {
-      throw new Error(
-        "Pinata credentials (PINATA_JWT, PINATA_GATEWAY) missing in .env"
-      );
-    }
-    this.pinata = new PinataSDK({
-      pinataJwt,
-      pinataGateway,
-    });
+    this.pinataService = new PinataService();
   }
 
   async createPumpFunToken(req: TokenCreationRequest): Promise<{
@@ -82,7 +72,7 @@ export class TokenService {
       const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
       const { tokenMint, bondingCurve, associatedBondingCurve, metadata } =
         await this.findAvailableAccounts();
-      const uri = req.uri || (await this.uploadMetadata(req));
+      const uri = req.uri || (await this.pinataService.uploadMetadata(req));
       const latestBlockhash = await this.connection.getLatestBlockhash(
         "confirmed"
       );
@@ -462,55 +452,6 @@ export class TokenService {
       (await this.connection.getBalance(creator)) / web3.LAMPORTS_PER_SOL,
       "SOL"
     );
-  }
-
-  private async uploadMetadata(req: TokenCreationRequest): Promise<string> {
-    if (!req.imageBuffer || !req.imageFileName) {
-      throw new Error(
-        "Image buffer and filename are required for metadata upload"
-      );
-    }
-
-    const imageFile = new File([req.imageBuffer], req.imageFileName, {
-      type: "image/png",
-    });
-
-    const imageUpload = await this.pinata.upload.public.file(imageFile);
-    if (!imageUpload.cid) {
-      throw new Error("Failed to upload image to Pinata IPFS");
-    }
-    console.log("Image CID:", imageUpload.cid);
-    const imageUrl = `${process.env.PINATA_GATEWAY}/ipfs/${imageUpload.cid}`;
-
-    const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
-    const metadata = {
-      name: req.name.slice(0, 32),
-      symbol: req.symbol.slice(0, 8),
-      description: req.description || "A Pump.fun token",
-      image: imageUrl,
-      external_url: req.external_url || "",
-      attributes: req.attributes || [],
-      properties: {
-        files: [{ uri: imageUrl, type: "image/png" }],
-        category: "image",
-        creators: [
-          {
-            address: creatorKeypair.publicKey.toBase58(),
-            share: 100,
-          },
-        ],
-      },
-      seller_fee_basis_points: 0,
-    };
-
-    const metadataUpload = await this.pinata.upload.public.json(metadata);
-    if (!metadataUpload.cid) {
-      throw new Error("Failed to upload metadata JSON to Pinata IPFS");
-    }
-    console.log("Metadata CID:", metadataUpload.cid);
-    const uri = `https://${process.env.PINATA_GATEWAY}/ipfs/${metadataUpload.cid}`;
-    console.log("Generated Metadata URI:", uri);
-    return uri;
   }
 
   private async createPumpFunInstruction(

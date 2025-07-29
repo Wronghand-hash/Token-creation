@@ -474,11 +474,13 @@ export class TokenService {
     const imageFile = new File([req.imageBuffer], req.imageFileName, {
       type: "image/png",
     });
+
     const imageUpload = await this.pinata.upload.public.file(imageFile);
     if (!imageUpload.cid) {
       throw new Error("Failed to upload image to Pinata IPFS");
     }
-    const imageUrl = `https://ipfs.io/ipfs/${imageUpload.cid}`;
+    console.log("Image CID:", imageUpload.cid);
+    const imageUrl = `${process.env.PINATA_GATEWAY}/ipfs/${imageUpload.cid}`;
 
     const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
     const metadata = {
@@ -498,15 +500,15 @@ export class TokenService {
           },
         ],
       },
-      seller_fee_basis_points: 0, // Add royalties (0 for none, or e.g., 500 for 5%)
+      seller_fee_basis_points: 0,
     };
 
     const metadataUpload = await this.pinata.upload.public.json(metadata);
     if (!metadataUpload.cid) {
       throw new Error("Failed to upload metadata JSON to Pinata IPFS");
     }
-
-    const uri = `https://ipfs.io/ipfs/${metadataUpload.cid}`;
+    console.log("Metadata CID:", metadataUpload.cid);
+    const uri = `https://${process.env.PINATA_GATEWAY}/ipfs/${metadataUpload.cid}`;
     console.log("Generated Metadata URI:", uri);
     return uri;
   }

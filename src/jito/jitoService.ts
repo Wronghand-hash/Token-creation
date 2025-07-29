@@ -86,8 +86,9 @@ export class JitoBundler {
       const serializedMainTx = bs58.encode(mainTx.serialize());
       const serializedTransactions = [serializedJitoFeeTx, serializedMainTx];
 
-      // Use a single devnet-compatible endpoint to avoid rate-limiting
-      const endpoints = ["https://api.devnet.solana.com"]; // Devnet RPC for simplicity
+      const endpoints = [
+        process.env.JITO_RPC_URL || "https://api.devnet.solana.com",
+      ];
       const maxRetries = 3;
       const retryDelay = (attempt: number) =>
         Math.min(1000 * 2 ** attempt, 5000);

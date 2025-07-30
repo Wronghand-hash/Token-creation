@@ -6,7 +6,11 @@ import {
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+} from "@solana/spl-token";
 import { AnchorProvider, utils, web3 } from "@coral-xyz/anchor";
 import bs58 from "bs58";
 import { JitoBundler } from "../jito/jitoService";
@@ -39,6 +43,7 @@ export class TokenService {
       11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107, 4, 195, 205,
       88, 184, 108, 115, 26, 160, 253, 181, 73, 182, 209, 188, 3, 248, 41, 70,
     ]),
+    CREATOR_VAULT: utils.bytes.utf8.encode("creator-vault"),
   };
 
   constructor() {
@@ -76,21 +81,58 @@ export class TokenService {
       const latestBlockhash = await this.connection.getLatestBlockhash(
         "confirmed"
       );
+
       const pumpFunInstruction = await this.createPumpFunInstruction(
         tokenMint.publicKey,
         creatorKeypair.publicKey,
         { ...req, uri }
       );
+
       const transaction = new Transaction().add(pumpFunInstruction);
+
+      // Add ATA creation and buy instruction if buyAmount is provided
+      if (req.buyAmount && req.buyAmount > 0) {
+        const associatedUser = await web3.PublicKey.findProgramAddressSync(
+          [
+            creatorKeypair.publicKey.toBuffer(),
+            TOKEN_PROGRAM_ID.toBuffer(),
+            tokenMint.publicKey.toBuffer(),
+          ],
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0];
+
+        // Add instruction to create the associated token account
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          creatorKeypair.publicKey, // Payer
+          associatedUser, // ATA
+          creatorKeypair.publicKey, // Owner
+          tokenMint.publicKey // Mint
+        );
+        transaction.add(createATAInstruction);
+
+        // Add buy instruction
+        const buyInstruction = await this.createBuyInstruction(
+          tokenMint.publicKey,
+          creatorKeypair.publicKey,
+          bondingCurve,
+          associatedBondingCurve,
+          associatedUser,
+          req.buyAmount
+        );
+        transaction.add(buyInstruction);
+      }
+
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair);
+
       await this.recheckAccounts(
         tokenMint.publicKey,
         bondingCurve,
         associatedBondingCurve,
         metadata
       );
+
       this.logTransactionDetails(
         creatorKeypair,
         tokenMint,
@@ -99,7 +141,9 @@ export class TokenService {
         metadata,
         transaction
       );
+
       await this.simulateTransaction(transaction);
+
       return await this.submitTransaction(
         transaction,
         creatorKeypair,
@@ -125,20 +169,29 @@ export class TokenService {
         "Missing required fields: name, symbol, creatorKeypair, and either uri or image file"
       );
     }
+
     if (req.name.length > 32) {
       throw new Error("Name must be 32 characters or less");
     }
+
     if (req.symbol.length > 8) {
       throw new Error("Symbol must be 8 characters or less");
     }
+
     if (req.uri && req.uri.length > 200) {
       throw new Error("URI must be 200 characters or less");
     }
+
     if (req.imageBuffer && req.imageBuffer.length > 1_000_000) {
       throw new Error("Image file must be less than 1MB for Pinata free tier");
     }
+
     if (req.external_url && !/^(https?:\/\/)/.test(req.external_url)) {
       throw new Error("external_url must be a valid URL");
+    }
+
+    if (req.buyAmount && (req.buyAmount <= 0 || isNaN(req.buyAmount))) {
+      throw new Error("buyAmount must be a positive number");
     }
   }
 
@@ -179,6 +232,7 @@ export class TokenService {
         ],
         new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
       )[0];
+
       const [
         mintAccountInfo,
         bondingCurveInfo,
@@ -190,6 +244,7 @@ export class TokenService {
         this.connection.getAccountInfo(associatedBondingCurve),
         this.connection.getAccountInfo(metadata),
       ]);
+
       if (
         !mintAccountInfo &&
         !bondingCurveInfo &&
@@ -199,6 +254,7 @@ export class TokenService {
         return { tokenMint, bondingCurve, associatedBondingCurve, metadata };
       }
     }
+
     throw new Error(
       "Failed to find unused mint, bonding curve, or metadata accounts after maximum attempts"
     );
@@ -216,6 +272,7 @@ export class TokenService {
       this.connection.getAccountInfo(associatedBondingCurve),
       this.connection.getAccountInfo(metadata),
     ]);
+
     if (recheckAccounts.some((info) => info !== null)) {
       throw new Error(
         `One or more accounts became occupied before transaction submission: Mint: ${mint.toBase58()}, BondingCurve: ${bondingCurve.toBase58()}, AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, Metadata: ${metadata.toBase58()}`
@@ -291,6 +348,7 @@ export class TokenService {
     tokenMint: Keypair
   ): Promise<{ success: boolean; signature?: string; error?: string }> {
     let result: { confirmed: boolean; signature?: string; error?: string };
+
     try {
       console.log("Attempting Jito bundler submission...");
       result = await this.jitoBundler.executeAndConfirm(
@@ -299,6 +357,7 @@ export class TokenService {
         latestBlockhash,
         [tokenMint]
       );
+
       if (result.confirmed) {
         console.log("Jito Transaction Signature:", result.signature);
       } else {
@@ -314,6 +373,7 @@ export class TokenService {
             : "Jito bundler failed",
       };
     }
+
     if (!result.confirmed) {
       result = await this.fallbackDirectSubmission(
         transaction,
@@ -322,11 +382,13 @@ export class TokenService {
         tokenMint
       );
     }
+
     await this.logPostTransactionState(
       tokenMint.publicKey,
       creatorKeypair.publicKey,
       result.signature
     );
+
     return {
       success: result.confirmed,
       signature: result.signature,
@@ -345,6 +407,7 @@ export class TokenService {
       confirmed: false,
       error: "Direct submission failed",
     };
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         console.log(`Direct submission attempt ${attempt}/${maxRetries}...`);
@@ -355,10 +418,12 @@ export class TokenService {
           transaction.recentBlockhash = newBlockhash.blockhash;
           transaction.sign(tokenMint, creatorKeypair);
         }
+
         const signature = await this.connection.sendRawTransaction(
           transaction.serialize()
         );
         console.log("Direct Transaction Signature:", signature);
+
         const confirmation = await this.connection.confirmTransaction(
           {
             signature,
@@ -371,6 +436,7 @@ export class TokenService {
           "Direct Confirmation:",
           JSON.stringify(confirmation, null, 2)
         );
+
         if (!confirmation.value.err) {
           return { confirmed: true, signature, error: undefined };
         } else {
@@ -397,6 +463,7 @@ export class TokenService {
         };
       }
     }
+
     return result;
   }
 
@@ -492,9 +559,11 @@ export class TokenService {
       [this.SEEDS.EVENT_AUTHORITY],
       this.programId
     )[0];
+
     const nameBuffer = Buffer.from(tokenData.name);
     const symbolBuffer = Buffer.from(tokenData.symbol);
     const uriBuffer = Buffer.from(tokenData.uri || "");
+
     const data = Buffer.concat([
       discriminator,
       Buffer.from([nameBuffer.length, 0, 0, 0]),
@@ -505,6 +574,7 @@ export class TokenService {
       uriBuffer,
       creator.toBuffer(),
     ]);
+
     const accounts = [
       { pubkey: mint, isSigner: true, isWritable: true },
       { pubkey: mintAuthority, isSigner: false, isWritable: false },
@@ -533,6 +603,70 @@ export class TokenService {
       { pubkey: eventAuthority, isSigner: false, isWritable: false },
       { pubkey: this.programId, isSigner: false, isWritable: false },
     ];
+
+    return new TransactionInstruction({
+      keys: accounts,
+      programId: this.programId,
+      data,
+    });
+  }
+
+  private async createBuyInstruction(
+    mint: PublicKey,
+    user: PublicKey,
+    bondingCurve: PublicKey,
+    associatedBondingCurve: PublicKey,
+    associatedUser: PublicKey,
+    buyAmount: number
+  ): Promise<TransactionInstruction> {
+    const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
+    const global = web3.PublicKey.findProgramAddressSync(
+      [this.SEEDS.GLOBAL],
+      this.programId
+    )[0];
+    const creatorVault = web3.PublicKey.findProgramAddressSync(
+      [this.SEEDS.CREATOR_VAULT, user.toBuffer()],
+      this.programId
+    )[0];
+    const eventAuthority = web3.PublicKey.findProgramAddressSync(
+      [this.SEEDS.EVENT_AUTHORITY],
+      this.programId
+    )[0];
+    const feeRecipient = new PublicKey(
+      "CebN5WGQ4jvNXQ71WpR88x63QJFkui9G4hwp9mxR1Qto"
+    );
+
+    // Convert buyAmount (lamports) to u64 buffer
+    const amountBuffer = Buffer.alloc(8);
+    amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
+
+    // Set max_sol_cost to a reasonable limit (buyAmount + 10% for fees)
+    const maxSolCost = Math.floor(buyAmount * 1.1);
+    const maxSolCostBuffer = Buffer.alloc(8);
+    maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));
+
+    const data = Buffer.concat([discriminator, amountBuffer, maxSolCostBuffer]);
+
+    const accounts = [
+      { pubkey: global, isSigner: false, isWritable: false },
+      { pubkey: feeRecipient, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: bondingCurve, isSigner: false, isWritable: true },
+      { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
+      { pubkey: associatedUser, isSigner: false, isWritable: true },
+      { pubkey: user, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      {
+        pubkey: new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+        isSigner: false,
+        isWritable: false,
+      },
+      { pubkey: creatorVault, isSigner: false, isWritable: true },
+      { pubkey: eventAuthority, isSigner: false, isWritable: false },
+      { pubkey: this.programId, isSigner: false, isWritable: false },
+    ];
+
     return new TransactionInstruction({
       keys: accounts,
       programId: this.programId,

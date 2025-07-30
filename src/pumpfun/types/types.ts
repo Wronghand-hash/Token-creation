@@ -9,4 +9,5 @@ export interface TokenCreationRequest {
   external_url?: string;
   attributes?: Array<{ trait_type: string; value: string }>;
   uri?: string; // pre genrated uri
+  buyAmount?: number;
 }

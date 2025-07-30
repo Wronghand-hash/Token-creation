@@ -1,8 +1,12 @@
 import express, { Request, Response, Router } from "express";
 import multer from "multer";
 import { createLaunchlabToken } from "../launchlab/createMint";
+import BN from "bn.js";
+import { LaunchpadRequest } from "../types/types";
+
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
 interface TokenRequest extends Request {
   body: any;
   file?: Express.Multer.File;
@@ -13,7 +17,7 @@ router.post(
   upload.single("image"),
   async (req: TokenRequest, res: Response) => {
     try {
-      const tokenData = req.body;
+      const tokenData: LaunchpadRequest = req.body;
 
       if (req.file) {
         tokenData.imageBuffer = req.file.buffer;
@@ -27,7 +31,7 @@ router.post(
       ) {
         return res.status(400).json({
           error:
-            "Missing required fields: name, symbol, creatorKeypair, and either uri or image file",
+            "Missing required fields: name, symbol, and either uri or image file",
         });
       }
 
@@ -36,19 +40,16 @@ router.post(
           .status(400)
           .json({ error: "Name must be 32 characters or less" });
       }
-
       if (tokenData.symbol.length > 8) {
         return res
           .status(400)
           .json({ error: "Symbol must be 8 characters or less" });
       }
-
       if (tokenData.uri && tokenData.uri.length > 200) {
         return res
           .status(400)
           .json({ error: "URI must be 200 characters or less" });
       }
-
       if (
         tokenData.external_url &&
         !/^(https?:\/\/)/.test(tokenData.external_url)
@@ -57,17 +58,39 @@ router.post(
           .status(400)
           .json({ error: "external_url must be a valid URL" });
       }
+      if (
+        tokenData.decimals &&
+        (isNaN(tokenData.decimals) ||
+          tokenData.decimals < 0 ||
+          tokenData.decimals > 9)
+      ) {
+        return res
+          .status(400)
+          .json({ error: "Decimals must be a number between 0 and 9" });
+      }
+      if (
+        tokenData.migrateType &&
+        !["amm" /* add other valid types */].includes(tokenData.migrateType)
+      ) {
+        return res.status(400).json({ error: "Invalid migrateType" });
+      }
+
+      if (tokenData.slippage) {
+        tokenData.slippage = new BN(tokenData.slippage);
+      }
+      if (tokenData.buyAmount) {
+        tokenData.buyAmount = new BN(tokenData.buyAmount);
+      }
 
       const result = await createLaunchlabToken(tokenData);
-
-      if (result) {
-        return res.json({ success: true, signature: result });
-      } else {
-        return res.status(500).json({ error: "Token creation failed" });
-      }
-    } catch (error) {
+      return res.json({ success: true, signature: result });
+    } catch (error: any) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Server error";
+      const errorLogs = error.logs ? { logs: error.logs } : {};
       return res.status(500).json({
-        error: error instanceof Error ? error.message : "Server error",
+        error: errorMessage,
+        ...errorLogs,
       });
     }
   }

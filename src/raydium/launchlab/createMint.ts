@@ -1,10 +1,8 @@
 import {
   TxVersion,
-  DEVNET_PROGRAM_ID,
   getPdaLaunchpadConfigId,
   LaunchpadConfig,
   LAUNCHPAD_PROGRAM,
-  LaunchpadPoolInitParam,
 } from "@raydium-io/raydium-sdk-v2";
 import { initSdk } from "../config";
 import BN from "bn.js";
@@ -13,26 +11,12 @@ import {
   PublicKey,
   VersionedTransaction,
   Connection,
-  TransactionInstruction,
-  AccountMeta,
 } from "@solana/web3.js";
 import { NATIVE_MINT } from "@solana/spl-token";
 import { PinataService } from "../../pinata/index";
+import { LaunchpadRequest } from "../types/types";
 
 const pinataService = new PinataService();
-
-interface LaunchpadRequest {
-  name: string;
-  symbol: string;
-  uri?: string;
-  decimals?: number;
-  migrateType?: "amm" | "cpmm";
-  txVersion?: TxVersion;
-  slippage?: BN;
-  createOnly?: boolean;
-  extraSigners?: Keypair[];
-  buyAmount?: BN;
-}
 
 // Custom function to simulate and print transaction details in a human-readable format
 // async function customPrintSimulate(

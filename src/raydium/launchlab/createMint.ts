@@ -35,85 +35,85 @@ interface LaunchpadRequest {
 }
 
 // Custom function to simulate and print transaction details in a human-readable format
-async function customPrintSimulate(
-  connection: Connection,
-  transactions: VersionedTransaction[],
-  signers: Keypair[]
-) {
-  console.log("\n=== Transaction Simulation ===");
-  for (let i = 0; i < transactions.length; i++) {
-    const tx = transactions[i];
-    console.log(`\nTransaction ${i + 1}:`);
+// async function customPrintSimulate(
+//   connection: Connection,
+//   transactions: VersionedTransaction[],
+//   signers: Keypair[]
+// ) {
+//   console.log("\n=== Transaction Simulation ===");
+//   for (let i = 0; i < transactions.length; i++) {
+//     const tx = transactions[i];
+//     console.log(`\nTransaction ${i + 1}:`);
 
-    // Extract accounts
-    const message = tx.message;
-    console.log("Accounts Involved:");
-    message.staticAccountKeys.forEach((account, index) => {
-      console.log(
-        `  ${index + 1}. ${account?.toBase58()} ${
-          index === 0 ? "(Fee Payer)" : ""
-        }`
-      );
-      // Check if account exists
-      connection.getAccountInfo(account).then((info) => {
-        if (!info) {
-          console.warn(
-            `    Warning: Account ${account?.toBase58()} does not exist on-chain`
-          );
-        }
-      });
-    });
+//     // Extract accounts
+//     const message = tx.message;
+//     console.log("Accounts Involved:");
+//     message.staticAccountKeys.forEach((account, index) => {
+//       console.log(
+//         `  ${index + 1}. ${account?.toBase58()} ${
+//           index === 0 ? "(Fee Payer)" : ""
+//         }`
+//       );
+//       // Check if account exists
+//       connection.getAccountInfo(account).then((info) => {
+//         if (!info) {
+//           console.warn(
+//             `    Warning: Account ${account?.toBase58()} does not exist on-chain`
+//           );
+//         }
+//       });
+//     });
 
-    // Decode instructions (if possible)
-    console.log("\nInstructions:");
-    const compiledInstructions = message.compiledInstructions;
-    for (let j = 0; j < compiledInstructions.length; j++) {
-      const instr = compiledInstructions[j];
-      const programId = message.staticAccountKeys[instr.programIdIndex];
-      console.log(`  Instruction ${j + 1}:`);
-      console.log(`    Program: ${programId?.toBase58()}`);
-      console.log(`    Accounts:`);
-      instr.accountKeyIndexes.forEach((keyIndex) => {
-        const account = message.staticAccountKeys[keyIndex];
-        console.log(`      - ${account?.toBase58()}`);
-      });
-      // Note: Decoding instruction data requires knowledge of the program's instruction format
-      console.log(
-        `    Data (raw, base64): ${Buffer.from(instr.data).toString("base64")}`
-      );
-    }
+//     // Decode instructions (if possible)
+//     console.log("\nInstructions:");
+//     const compiledInstructions = message.compiledInstructions;
+//     for (let j = 0; j < compiledInstructions.length; j++) {
+//       const instr = compiledInstructions[j];
+//       const programId = message.staticAccountKeys[instr.programIdIndex];
+//       console.log(`  Instruction ${j + 1}:`);
+//       console.log(`    Program: ${programId?.toBase58()}`);
+//       console.log(`    Accounts:`);
+//       instr.accountKeyIndexes.forEach((keyIndex) => {
+//         const account = message.staticAccountKeys[keyIndex];
+//         console.log(`      - ${account?.toBase58()}`);
+//       });
+//       // Note: Decoding instruction data requires knowledge of the program's instruction format
+//       console.log(
+//         `    Data (raw, base64): ${Buffer.from(instr.data).toString("base64")}`
+//       );
+//     }
 
-    // Simulate the transaction
-    try {
-      const simulation = await connection.simulateTransaction(tx, {
-        sigVerify: false,
-        commitment: "confirmed",
-      });
+//     // Simulate the transaction
+//     try {
+//       const simulation = await connection.simulateTransaction(tx, {
+//         sigVerify: false,
+//         commitment: "confirmed",
+//       });
 
-      console.log("\nSimulation Result:");
-      if (simulation.value.err) {
-        console.error("  Status: Failed");
-        console.error("  Error:", simulation.value.err);
-        console.log("  Logs:");
-        simulation.value.logs?.forEach((log, index) => {
-          console.log(`    ${index + 1}. ${log}`);
-        });
-      } else {
-        console.log("  Status: Succeeded");
-        console.log(
-          "  Compute Units Consumed:",
-          simulation.value.unitsConsumed
-        );
-        console.log("  Logs:");
-        simulation.value.logs?.forEach((log, index) => {
-          console.log(`    ${index + 1}. ${log}`);
-        });
-      }
-    } catch (error: any) {
-      console.error("  Simulation Error:", error.message || error);
-    }
-  }
-}
+//       console.log("\nSimulation Result:");
+//       if (simulation.value.err) {
+//         console.error("  Status: Failed");
+//         console.error("  Error:", simulation.value.err);
+//         console.log("  Logs:");
+//         simulation.value.logs?.forEach((log, index) => {
+//           console.log(`    ${index + 1}. ${log}`);
+//         });
+//       } else {
+//         console.log("  Status: Succeeded");
+//         console.log(
+//           "  Compute Units Consumed:",
+//           simulation.value.unitsConsumed
+//         );
+//         console.log("  Logs:");
+//         simulation.value.logs?.forEach((log, index) => {
+//           console.log(`    ${index + 1}. ${log}`);
+//         });
+//       }
+//     } catch (error: any) {
+//       console.error("  Simulation Error:", error.message || error);
+//     }
+//   }
+// }
 
 export const createLaunchlabToken = async (tokenData: LaunchpadRequest) => {
   const raydium = await initSdk();
@@ -185,7 +185,7 @@ export const createLaunchlabToken = async (tokenData: LaunchpadRequest) => {
   console.log("Number of Transactions:", transactions.length);
 
   // Simulate transactions
-  await customPrintSimulate(raydium.connection, transactions, [pair]);
+  // await customPrintSimulate(raydium.connection, transactions, [pair]);
 
   try {
     const sentInfo = await execute({ sequentially: true });

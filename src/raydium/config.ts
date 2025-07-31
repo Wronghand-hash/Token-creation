@@ -3,12 +3,15 @@ import {
   TxVersion,
   parseTokenAccountResp,
 } from "@raydium-io/raydium-sdk-v2";
-import { Connection, Keypair, clusterApiUrl } from "@solana/web3.js";
+import { Connection, Keypair } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import bs58 from "bs58";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 export const owner: Keypair = Keypair.fromSecretKey(
-  bs58.decode(process.env.CREATOR_PRIVATE_KEY2 || "")
+  bs58.decode(process.env.CREATOR_PRIVATE_KEY || "")
 );
 export const connection = new Connection("https://api.mainnet-beta.solana.com");
 export const txVersion = TxVersion.V0;

@@ -1,15 +1,14 @@
 import express from "express";
 import dotenv from "dotenv";
-import pumpfunRoutes from "./pumpfun/pumpfun.handler";
-import raydiumRoutes from "./raydium/router/launchlab.router";
+import { Keypair } from "@solana/web3.js";
+import { createBonkTokenTx } from "./raydium/launchlab/createMint";
+import { connection, owner } from "./raydium/config";
 dotenv.config();
 
 const app = express();
 
 app.use(express.json());
 
-app.use("/api", pumpfunRoutes);
-app.use("/api", raydiumRoutes);
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

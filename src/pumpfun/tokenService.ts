@@ -266,17 +266,35 @@ export class TokenService {
     associatedBondingCurve: PublicKey,
     metadata: PublicKey
   ): Promise<void> {
-    const recheckAccounts = await Promise.all([
-      this.connection.getAccountInfo(mint),
-      this.connection.getAccountInfo(bondingCurve),
-      this.connection.getAccountInfo(associatedBondingCurve),
-      this.connection.getAccountInfo(metadata),
-    ]);
+    const maxRetries = 3;
+    let attempt = 0;
 
-    if (recheckAccounts.some((info) => info !== null)) {
-      throw new Error(
-        `One or more accounts became occupied before transaction submission: Mint: ${mint.toBase58()}, BondingCurve: ${bondingCurve.toBase58()}, AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, Metadata: ${metadata.toBase58()}`
-      );
+    while (attempt < maxRetries) {
+      try {
+        const recheckAccounts = await Promise.all([
+          this.connection.getAccountInfo(mint),
+          this.connection.getAccountInfo(bondingCurve),
+          this.connection.getAccountInfo(associatedBondingCurve),
+          this.connection.getAccountInfo(metadata),
+        ]);
+
+        if (recheckAccounts.some((info) => info !== null)) {
+          throw new Error(
+            `One or more accounts became occupied before transaction submission: Mint: ${mint.toBase58()}, BondingCurve: ${bondingCurve.toBase58()}, AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, Metadata: ${metadata.toBase58()}`
+          );
+        }
+        return;
+      } catch (error) {
+        attempt++;
+        if (attempt === maxRetries) {
+          throw new Error(
+            `Failed to recheck accounts after ${maxRetries} attempts: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
+      }
     }
   }
 
@@ -346,9 +364,8 @@ export class TokenService {
     creatorKeypair: Keypair,
     latestBlockhash: { blockhash: string; lastValidBlockHeight: number },
     tokenMint: Keypair
-  ): Promise<{ success: boolean; signature?: string; error?: string }> {
+  ) {
     let result: { confirmed: boolean; signature?: string; error?: string };
-
     try {
       console.log("Attempting Jito bundler submission...");
       result = await this.jitoBundler.executeAndConfirm(
@@ -357,7 +374,6 @@ export class TokenService {
         latestBlockhash,
         [tokenMint]
       );
-
       if (result.confirmed) {
         console.log("Jito Transaction Signature:", result.signature);
       } else {
@@ -373,7 +389,6 @@ export class TokenService {
             : "Jito bundler failed",
       };
     }
-
     if (!result.confirmed) {
       result = await this.fallbackDirectSubmission(
         transaction,
@@ -382,13 +397,11 @@ export class TokenService {
         tokenMint
       );
     }
-
     await this.logPostTransactionState(
       tokenMint.publicKey,
       creatorKeypair.publicKey,
       result.signature
     );
-
     return {
       success: result.confirmed,
       signature: result.signature,
@@ -657,11 +670,6 @@ export class TokenService {
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      {
-        pubkey: new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
-        isSigner: false,
-        isWritable: false,
-      },
       { pubkey: creatorVault, isSigner: false, isWritable: true },
       { pubkey: eventAuthority, isSigner: false, isWritable: false },
       { pubkey: this.programId, isSigner: false, isWritable: false },

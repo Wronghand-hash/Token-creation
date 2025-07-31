@@ -67,11 +67,7 @@ export class TokenService {
     this.pinataService = new PinataService();
   }
 
-  async createPumpFunToken(req: TokenCreationRequest): Promise<{
-    success: boolean;
-    signature?: string;
-    error?: string;
-  }> {
+  async createPumpFunToken(req: TokenCreationRequest) {
     try {
       this.validateRequest(req);
       const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
@@ -646,7 +642,7 @@ export class TokenService {
       this.programId
     )[0];
     const feeRecipient = new PublicKey(
-      "CebN5WGQ4jvNXQ71WpR88x63QJFkui9G4hwp9mxR1Qto"
+      "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
     );
 
     // Convert buyAmount (lamports) to u64 buffer

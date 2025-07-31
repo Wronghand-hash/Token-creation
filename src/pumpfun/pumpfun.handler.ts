@@ -66,7 +66,7 @@ router.post(
       const result = await tokenService.createPumpFunToken(tokenData);
 
       if (result.success) {
-        return res.json({ success: true, signature: result.signature });
+        return res.json({ success: true, signature: result });
       } else {
         return res
           .status(500)

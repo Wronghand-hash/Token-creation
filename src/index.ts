@@ -2,11 +2,13 @@ import express from "express";
 import dotenv from "dotenv";
 import pumpfunRoutes from "./pumpfun/pumpfun.handler";
 import { Router } from "express";
+import launchlabRouter from "./raydium/router/launchlab.router";
 
 dotenv.config();
 
 const app = express();
 const router = Router();
+router.use("/api", launchlabRouter);
 router.use("/api", pumpfunRoutes);
 app.use(express.json());
 app.use(router);

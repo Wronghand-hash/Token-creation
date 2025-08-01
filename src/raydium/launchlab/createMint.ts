@@ -8,7 +8,6 @@ import {
   TransactionMessage,
   PublicKey,
 } from "@solana/web3.js";
-
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
@@ -17,7 +16,6 @@ import {
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
-
 import { BN } from "bn.js";
 import {
   getATAAddress,
@@ -30,32 +28,20 @@ import {
   LAUNCHPAD_PROGRAM,
   LaunchpadConfig,
 } from "@raydium-io/raydium-sdk-v2";
-import { initSdk, owner } from "../config";
+import { initSdk } from "../config";
 import { JitoTransactionExecutor } from "./executer";
 import dotenv from "dotenv";
+import { LaunchpadRequest } from "../types/types";
+
 dotenv.config();
 
-const buyAmountOnCreate = 0.0001;
 const JITO_FEE = 0.001;
-const TOKEN_NAME = "SHWIGS";
-const TOKEN_SYMBOL = "SHWIGS";
-const TOKEN_SHOW_NAME = "SHWIGS";
-const DESCRIPTION = "A fun token for the SHWIGS platform";
-const TOKEN_CREATE_ON = "https://bonk.fun";
-const TWITTER = "https://x.com/bonkfun";
-const TELEGRAM = "https://t.me/bonkfun";
-const WEBSITE = "https://bonk.fun";
-const RPC_ENDPOINT = "https://api.mainnet-beta.solana.com";
-const RPC_WEBSOCKET_ENDPOINT = "wss://api.mainnet-beta.solana.com";
-const FILE =
-  "https://fuchsia-odd-lynx-135.mypinata.cloud/ipfs/bafybeighewl32sgjko2a2wk2rn772gjosvro3izwe56wg6carrtozcmpci";
 const BONK_PLATFROM_ID = new PublicKey(
   "FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1"
 );
-
 const commitment = "confirmed";
-const connection = new Connection(RPC_ENDPOINT, {
-  wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+
+const connection = new Connection(process.env.RPC_URL || "", {
   commitment,
 });
 
@@ -65,16 +51,10 @@ const jitoExecutor = new JitoTransactionExecutor(
   process.env.JITO_RPC_URL || ""
 );
 
-let kps: Keypair[] = [];
-
-const createImageMetadata = async (imageUrl: string) => {
+const createImageMetadata = async (imageData: Buffer) => {
   const formData = new FormData();
   try {
-    const response = await fetch(imageUrl);
-    if (!response.ok)
-      throw new Error(`Failed to fetch image: ${response.statusText}`);
-    const blob = await response.blob();
-    formData.append("image", blob, "token-image.png");
+    formData.append("image", new Blob([imageData]), "token-image.png");
 
     const uploadResponse = await fetch(
       "https://storage.letsbonk.fun/upload/img",
@@ -83,6 +63,10 @@ const createImageMetadata = async (imageUrl: string) => {
         body: formData,
       }
     );
+
+    if (!uploadResponse.ok) {
+      throw new Error(`Failed to upload image: ${uploadResponse.statusText}`);
+    }
 
     const resultText = await uploadResponse.text();
     console.log("Uploaded image link:", resultText);
@@ -98,14 +82,16 @@ const createBonkTokenMetadata = async (create: any) => {
     name: create.name,
     symbol: create.symbol,
     description: create.description,
-    createdOn: create.createdOn,
+    createdOn: create.createdOn || "https://bonk.fun",
     platformId: create.platformId,
     image: create.image,
-    website: create.website,
-    twitter: create.twitter,
-    telegram: create.telegram,
+    website: create.website || "https://bonk.fun",
+    twitter: create.twitter || "https://x.com/bonkfun",
+    telegram: create.telegram || "https://t.me/bonkfun",
     showName: create.showName,
   };
+
+  console.log("Metadata:", metadata);
 
   try {
     const response = await fetch("https://storage.letsbonk.fun/upload/meta", {
@@ -125,25 +111,50 @@ const createBonkTokenMetadata = async (create: any) => {
   }
 };
 
-export const createBonkFunTokenMetadata = async () => {
-  const imageInfo = {
-    file: FILE,
-  };
+export const createBonkFunTokenMetadata = async (
+  tokenData: LaunchpadRequest
+) => {
+  // Validate required fields
+  if (!tokenData.name || !tokenData.symbol || !tokenData.image) {
+    throw new Error(
+      "Missing required fields: name, symbol, and image are required"
+    );
+  }
 
-  const imageMetadata = await createImageMetadata(imageInfo.file);
+  if (tokenData.name.length > 32) {
+    throw new Error("Name must be 32 characters or less");
+  }
+
+  if (tokenData.symbol.length > 8) {
+    throw new Error("Symbol must be 8 characters or less");
+  }
+
+  if (tokenData.description && tokenData.description.length > 200) {
+    throw new Error("Description must be 200 characters or less");
+  }
+
+  if (tokenData.platformId) {
+    try {
+      new PublicKey(tokenData.platformId);
+    } catch {
+      throw new Error("platformId must be a valid Solana public key");
+    }
+  }
+
+  const imageMetadata = await createImageMetadata(tokenData.image);
   console.log("imageMetadata:", imageMetadata);
 
   const tokenInfo = {
-    name: TOKEN_NAME,
-    symbol: TOKEN_SYMBOL,
-    description: DESCRIPTION,
-    createdOn: TOKEN_CREATE_ON,
+    name: tokenData.name,
+    symbol: tokenData.symbol,
+    description: tokenData.description,
+    createdOn: tokenData.createdOn,
     platformId: BONK_PLATFROM_ID.toBase58(),
     image: imageMetadata,
-    website: WEBSITE,
-    twitter: TWITTER,
-    telegram: TELEGRAM,
-    showName: TOKEN_SHOW_NAME,
+    website: tokenData.website,
+    twitter: tokenData.twitter,
+    telegram: tokenData.telegram,
+    showName: tokenData.showName || tokenData.name,
   };
 
   const tokenMetadata = await createBonkTokenMetadata(tokenInfo);
@@ -154,10 +165,57 @@ export const createBonkFunTokenMetadata = async () => {
 export const createBonkTokenTx = async (
   connection: Connection,
   mainKp: Keypair,
-  mintKp: Keypair
+  mintKp: Keypair,
+  tokenData: LaunchpadRequest
 ) => {
   try {
-    const uri = await createBonkFunTokenMetadata();
+    // Validate required fields
+    if (!tokenData.name || !tokenData.symbol || !tokenData.image) {
+      throw new Error(
+        "Missing required fields: name, symbol, and image are required"
+      );
+    }
+
+    if (tokenData.name.length > 32) {
+      throw new Error("Name must be 32 characters or less");
+    }
+
+    if (tokenData.symbol.length > 8) {
+      throw new Error("Symbol must be 8 characters or less");
+    }
+
+    if (tokenData.description && tokenData.description.length > 200) {
+      throw new Error("Description must be 200 characters or less");
+    }
+
+    const urlPattern = /^(https?:\/\/)/;
+    if (tokenData.createdOn && !urlPattern.test(tokenData.createdOn)) {
+      throw new Error("createdOn must be a valid URL");
+    }
+    if (tokenData.website && !urlPattern.test(tokenData.website)) {
+      throw new Error("website must be a valid URL");
+    }
+    if (tokenData.twitter && !urlPattern.test(tokenData.twitter)) {
+      throw new Error("twitter must be a valid URL");
+    }
+    if (tokenData.telegram && !urlPattern.test(tokenData.telegram)) {
+      throw new Error("telegram must be a valid URL");
+    }
+
+    if (
+      tokenData.decimals &&
+      (isNaN(tokenData.decimals) ||
+        tokenData.decimals < 0 ||
+        tokenData.decimals > 9)
+    ) {
+      throw new Error("Decimals must be a number between 0 and 9");
+    }
+
+    if (tokenData.migrateType && !["amm"].includes(tokenData.migrateType)) {
+      throw new Error("Invalid migrateType");
+    }
+
+    const uri = await createBonkFunTokenMetadata(tokenData);
     if (!uri) {
       throw new Error("Token metadata URI is undefined");
     }
@@ -169,6 +227,7 @@ export const createBonkTokenTx = async (
       0,
       0
     ).publicKey;
+
     const configData = await connection.getAccountInfo(configId);
     if (!configData) {
       throw new Error("Config not found");
@@ -176,26 +235,26 @@ export const createBonkTokenTx = async (
 
     const configInfo = LaunchpadConfig.decode(configData.data);
     const mintBInfo = await raydium.token.getTokenInfo(configInfo.mintB);
-    const solBuyAmount = 0.01;
-    const buyAmount = new BN(solBuyAmount * 10 ** 9);
-    const slippageAmount = 0.1;
-    const slippage = new BN(slippageAmount * 100);
+
+    const slippage = new BN(tokenData.slippage || 100);
 
     const { transactions } = await raydium.launchpad.createLaunchpad({
       programId: LAUNCHPAD_PROGRAM,
       mintA: mintKp.publicKey,
-      decimals: 6,
-      name: TOKEN_NAME,
-      symbol: TOKEN_SYMBOL,
-      migrateType: "amm",
+      decimals: tokenData.decimals || 6,
+      name: tokenData.name,
+      symbol: tokenData.symbol,
+      migrateType: tokenData.migrateType || "amm",
       uri,
       configId,
       configInfo,
       mintBDecimals: mintBInfo.decimals,
       slippage,
-      platformId: BONK_PLATFROM_ID,
+      platformId: tokenData.platformId
+        ? new PublicKey(tokenData.platformId)
+        : BONK_PLATFROM_ID,
       txVersion: TxVersion.LEGACY,
-      buyAmount,
+      buyAmount: new BN(tokenData.buyAmount || 0),
       feePayer: mainKp.publicKey,
       createOnly: true,
       extraSigners: [mintKp],
@@ -205,16 +264,19 @@ export const createBonkTokenTx = async (
       },
     });
 
-    // Add buy instruction for a small amount
-    const buyInstruction = await makeBuyIx(
-      mainKp,
-      buyAmountOnCreate * LAMPORTS_PER_SOL,
-      mintKp.publicKey
-    );
+    const ixs = [...transactions[0].instructions];
+
+    // Only add buy instruction if buyAmount is provided
+    if (tokenData.buyAmount && tokenData.buyAmount > 0) {
+      const buyInstruction = await makeBuyIx(
+        mainKp,
+        tokenData.buyAmount * LAMPORTS_PER_SOL,
+        mintKp.publicKey
+      );
+      ixs.push(...buyInstruction);
+    }
 
     const { blockhash } = await connection.getLatestBlockhash();
-    const ixs = [...transactions[0].instructions, ...buyInstruction];
-
     const messageV0 = new TransactionMessage({
       payerKey: mainKp.publicKey,
       recentBlockhash: blockhash,
@@ -247,14 +309,17 @@ export const makeBuyIx = async (
 ) => {
   const buyInstruction: TransactionInstruction[] = [];
   const lamports = buyAmount;
+
   console.log("launchpad programId:", LAUNCHPAD_PROGRAM.toBase58());
   const programId = LAUNCHPAD_PROGRAM;
+
   const configId = getPdaLaunchpadConfigId(
     programId,
     NATIVE_MINT,
     0,
     0
   ).publicKey;
+
   const poolId = getPdaLaunchpadPoolId(
     programId,
     mintAddress,
@@ -267,6 +332,7 @@ export const makeBuyIx = async (
     kp.publicKey
   );
   console.log("🚀 ~ makeBuyTx ~ userTokenAccountA:", userTokenAccountA);
+
   const userTokenAccountB = getAssociatedTokenAddressSync(
     NATIVE_MINT,
     kp.publicKey
@@ -279,8 +345,9 @@ export const makeBuyIx = async (
 
   const buyerBalance = await connection.getBalance(kp.publicKey);
   console.log("🚀 ~ makeBuyTx ~ buyerBalance:", buyerBalance);
+
   const requiredBalance = rentExemptionAmount * 2 + lamports;
-  console.log("🚀 ~ makeBuyTx ~ requiredBalanc :", requiredBalance);
+  console.log("🚀 ~ makeBuyTx ~ requiredBalance:", requiredBalance);
 
   const vaultA = getPdaLaunchpadVaultId(
     programId,
@@ -288,6 +355,7 @@ export const makeBuyIx = async (
     mintAddress
   ).publicKey;
   console.log("🚀 ~ makeBuyTx ~ vaultA:", vaultA);
+
   const vaultB = getPdaLaunchpadVaultId(
     programId,
     poolId,
@@ -297,14 +365,18 @@ export const makeBuyIx = async (
 
   const shareATA = getATAAddress(kp.publicKey, NATIVE_MINT).publicKey;
   console.log("🚀 ~ makeBuyTx ~ shareATA:", shareATA);
+
   const authProgramId = getPdaLaunchpadAuth(programId).publicKey;
   console.log("🚀 ~ makeBuyTx ~ authProgramId:", authProgramId);
+
   const minmintAmount = new BN(1);
 
   const tokenAta = await getAssociatedTokenAddress(mintAddress, kp.publicKey);
   console.log("🚀 ~ makeBuyTx ~ tokenAta:", tokenAta);
+
   const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, kp.publicKey);
   console.log("🚀 ~ makeBuyTx ~ wsolAta:", wsolAta);
+
   buyInstruction.push(
     createAssociatedTokenAccountIdempotentInstruction(
       kp.publicKey,
@@ -350,40 +422,8 @@ export const makeBuyIx = async (
   );
 
   console.log("🚀 ~ makeBuyTx ~ instruction:", instruction);
-
   buyInstruction.push(instruction);
   console.log("🚀 ~ makeBuyTx ~ buyInstruction:", buyInstruction);
 
   return buyInstruction;
 };
-
-// (async () => {
-//   const mainKp = owner;
-//   const mintKp = Keypair.generate();
-
-//   console.log("Main Wallet Public Key:", mainKp.publicKey.toBase58());
-//   console.log("New Mint Public Key:", mintKp.publicKey.toBase58());
-
-//   try {
-//     const transaction = await createBonkTokenTx(connection, mainKp, mintKp);
-
-//     if (transaction) {
-//       console.log("Sending token creation transaction...");
-
-//       const latestBlockhash = await connection.getLatestBlockhash();
-//       const signature = await jitoExecutor.executeAndConfirm(
-//         transaction,
-//         mainKp,
-//         latestBlockhash
-//       );
-
-//       if (signature) {
-//         console.log("Transaction successfully created and simulated!");
-//       }
-//     } else {
-//       console.error("Failed to create the token transaction.");
-//     }
-//   } catch (error) {
-//     console.error("Error during token creation process:", error);
-//   }
-// })();

@@ -1,6 +1,7 @@
 import {
   Connection,
   Keypair,
+  LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
@@ -26,8 +27,6 @@ export class TokenService {
   private readonly programId: PublicKey = new PublicKey(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
   );
-  private readonly DECIMALS: number = 6;
-  private readonly provider: AnchorProvider;
   private readonly pinataService: PinataService;
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
@@ -71,7 +70,7 @@ export class TokenService {
     try {
       this.validateRequest(req);
       const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
-      const { tokenMint, bondingCurve, associatedBondingCurve, metadata } =
+      const { tokenMint, bondingCurve, associatedBondingCurve } =
         await this.findAvailableAccounts();
       const uri = req.uri || (await this.pinataService.uploadMetadata(req));
       const latestBlockhash = await this.connection.getLatestBlockhash(
@@ -88,6 +87,7 @@ export class TokenService {
 
       // Add ATA creation and buy instruction if buyAmount is provided
       if (req.buyAmount && req.buyAmount > 0) {
+        const lamportsBuyAmount = req.buyAmount * LAMPORTS_PER_SOL;
         const associatedUser = await web3.PublicKey.findProgramAddressSync(
           [
             creatorKeypair.publicKey.toBuffer(),
@@ -97,12 +97,11 @@ export class TokenService {
           ASSOCIATED_TOKEN_PROGRAM_ID
         )[0];
 
-        // Add instruction to create the associated token account
         const createATAInstruction = createAssociatedTokenAccountInstruction(
           creatorKeypair.publicKey, // Payer
           associatedUser, // ATA
           creatorKeypair.publicKey, // Owner
-          tokenMint.publicKey // Mint
+          tokenMint.publicKey
         );
         transaction.add(createATAInstruction);
 
@@ -113,7 +112,7 @@ export class TokenService {
           bondingCurve,
           associatedBondingCurve,
           associatedUser,
-          req.buyAmount
+          lamportsBuyAmount
         );
         transaction.add(buyInstruction);
       }
@@ -121,22 +120,6 @@ export class TokenService {
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair);
-
-      await this.recheckAccounts(
-        tokenMint.publicKey,
-        bondingCurve,
-        associatedBondingCurve,
-        metadata
-      );
-
-      this.logTransactionDetails(
-        creatorKeypair,
-        tokenMint,
-        bondingCurve,
-        associatedBondingCurve,
-        metadata,
-        transaction
-      );
 
       await this.simulateTransaction(transaction);
 
@@ -256,88 +239,6 @@ export class TokenService {
     );
   }
 
-  private async recheckAccounts(
-    mint: PublicKey,
-    bondingCurve: PublicKey,
-    associatedBondingCurve: PublicKey,
-    metadata: PublicKey
-  ): Promise<void> {
-    const maxRetries = 3;
-    let attempt = 0;
-
-    while (attempt < maxRetries) {
-      try {
-        const recheckAccounts = await Promise.all([
-          this.connection.getAccountInfo(mint),
-          this.connection.getAccountInfo(bondingCurve),
-          this.connection.getAccountInfo(associatedBondingCurve),
-          this.connection.getAccountInfo(metadata),
-        ]);
-
-        if (recheckAccounts.some((info) => info !== null)) {
-          throw new Error(
-            `One or more accounts became occupied before transaction submission: Mint: ${mint.toBase58()}, BondingCurve: ${bondingCurve.toBase58()}, AssociatedBondingCurve: ${associatedBondingCurve.toBase58()}, Metadata: ${metadata.toBase58()}`
-          );
-        }
-        return;
-      } catch (error) {
-        attempt++;
-        if (attempt === maxRetries) {
-          throw new Error(
-            `Failed to recheck accounts after ${maxRetries} attempts: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s before retry
-      }
-    }
-  }
-
-  private async logTransactionDetails(
-    creatorKeypair: Keypair,
-    tokenMint: Keypair,
-    bondingCurve: PublicKey,
-    associatedBondingCurve: PublicKey,
-    metadata: PublicKey,
-    transaction: Transaction
-  ): Promise<void> {
-    console.log("Creator Public Key:", creatorKeypair.publicKey.toBase58());
-    console.log("Mint Address:", tokenMint.publicKey.toBase58());
-    console.log("Bonding Curve Address:", bondingCurve.toBase58());
-    console.log(
-      "Associated Bonding Curve Address:",
-      associatedBondingCurve.toBase58()
-    );
-    console.log("Metadata Address:", metadata.toBase58());
-    console.log(
-      "Creator Balance:",
-      (await this.connection.getBalance(creatorKeypair.publicKey)) /
-        web3.LAMPORTS_PER_SOL,
-      "SOL"
-    );
-    console.log(
-      "Transaction (Base64):",
-      transaction.serialize({ requireAllSignatures: false }).toString("base64")
-    );
-    console.log(
-      "Mint Account Before:",
-      await this.connection.getAccountInfo(tokenMint.publicKey)
-    );
-    console.log(
-      "Bonding Curve Account Before:",
-      await this.connection.getAccountInfo(bondingCurve)
-    );
-    console.log(
-      "Associated Bonding Curve Account Before:",
-      await this.connection.getAccountInfo(associatedBondingCurve)
-    );
-    console.log(
-      "Metadata Account Before:",
-      await this.connection.getAccountInfo(metadata)
-    );
-  }
-
   private async simulateTransaction(transaction: Transaction): Promise<void> {
     const simulationResult = await this.connection.simulateTransaction(
       transaction
@@ -393,11 +294,7 @@ export class TokenService {
         tokenMint
       );
     }
-    await this.logPostTransactionState(
-      tokenMint.publicKey,
-      creatorKeypair.publicKey,
-      result.signature
-    );
+
     return {
       success: result.confirmed,
       signature: result.signature,
@@ -474,60 +371,6 @@ export class TokenService {
     }
 
     return result;
-  }
-
-  private async logPostTransactionState(
-    mint: PublicKey,
-    creator: PublicKey,
-    signature?: string
-  ): Promise<void> {
-    console.log(
-      "Mint Account After:",
-      await this.connection.getAccountInfo(mint)
-    );
-    console.log(
-      "Bonding Curve Account After:",
-      await this.connection.getAccountInfo(
-        web3.PublicKey.findProgramAddressSync(
-          [this.SEEDS.BONDING_CURVE, mint.toBuffer()],
-          this.programId
-        )[0]
-      )
-    );
-    console.log(
-      "Associated Bonding Curve Account After:",
-      await this.connection.getAccountInfo(
-        web3.PublicKey.findProgramAddressSync(
-          [
-            web3.PublicKey.findProgramAddressSync(
-              [this.SEEDS.BONDING_CURVE, mint.toBuffer()],
-              this.programId
-            )[0].toBuffer(),
-            this.SEEDS.ASSOCIATED_BONDING_CURVE_CONSTANT,
-            mint.toBuffer(),
-          ],
-          new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
-        )[0]
-      )
-    );
-    console.log(
-      "Metadata Account After:",
-      await this.connection.getAccountInfo(
-        web3.PublicKey.findProgramAddressSync(
-          [
-            utils.bytes.utf8.encode("metadata"),
-            this.SEEDS.METADATA_CONSTANT,
-            mint.toBuffer(),
-          ],
-          new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
-        )[0]
-      )
-    );
-    console.log(
-      "Creator Balance After:",
-      (await this.connection.getBalance(creator)) / web3.LAMPORTS_PER_SOL,
-      "SOL"
-    );
   }
 
   private async createPumpFunInstruction(

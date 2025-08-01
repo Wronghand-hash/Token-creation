@@ -8,9 +8,10 @@ export interface LaunchpadRequest {
   uri?: string;
   migrateType?: "amm" | "cpmm";
   slippage?: BN;
-  buyAmount?: BN;
+  buyAmount?: number;
   imageBuffer?: Buffer;
   imageFileName?: string;
   external_url?: string;
+  creatorKeypair?: string;
   [key: string]: any;
 }

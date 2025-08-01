@@ -1,4 +1,5 @@
 import { Keypair, PublicKey } from "@solana/web3.js";
+import bs58 from "bs58";
 
 export async function derivePda(
   seeds: (string | Buffer)[],
@@ -49,4 +50,12 @@ export function generateChunkSpecificKeypair() {
   }
 
   return pairList;
+}
+
+export function getCreatorKeypair(secretKeyBase58: string): Keypair {
+  const secretKey = bs58.decode(secretKeyBase58);
+  if (secretKey.length !== 64) {
+    throw new Error("Invalid creatorKeypair: must be 64 bytes");
+  }
+  return Keypair.fromSecretKey(secretKey);
 }

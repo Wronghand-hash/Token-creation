@@ -54,15 +54,6 @@ router.post(
           .json({ error: "URI must be 200 characters or less" });
       }
 
-      if (
-        tokenData.external_url &&
-        !/^(https?:\/\/)/.test(tokenData.external_url)
-      ) {
-        return res
-          .status(400)
-          .json({ error: "external_url must be a valid URL" });
-      }
-
       const result = await tokenService.createPumpFunToken(tokenData);
 
       if (result.success) {

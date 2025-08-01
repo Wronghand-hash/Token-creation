@@ -299,6 +299,7 @@ export class TokenService {
     return {
       success: result.confirmed,
       signature: result.signature,
+      mintAddress: tokenMint.publicKey.toBase58(),
       error: result.error,
     };
   }

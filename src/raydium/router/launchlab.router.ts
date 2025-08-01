@@ -149,7 +149,7 @@ router.post(
           return res.json({
             success: true,
             signature: signature.signature,
-            mint: mintKp.publicKey.toBase58(),
+            mintAddress: mintKp.publicKey.toBase58(),
           });
         } else {
           console.error("Failed to create the token transaction.");

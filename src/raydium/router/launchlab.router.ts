@@ -13,6 +13,13 @@ interface TokenRequest extends Request {
   file?: Express.Multer.File;
 }
 
+const JITO_FEE = 0.001;
+
+const jitoExecutor = new JitoTransactionExecutor(
+  JITO_FEE.toString(),
+  connection,
+  process.env.JITO_RPC_URL || ""
+);
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -126,12 +133,36 @@ router.post(
         tokenData
       );
 
-      // Return transaction details without executing
-      return res.json({
-        success: true,
-        transaction: transaction.serialize().toString(),
-        mint: mintKp.publicKey.toBase58(),
-      });
+      if (transaction) {
+        console.log("Sending token creation transaction...");
+
+        const latestBlockhash = await connection.getLatestBlockhash();
+        const signature = await jitoExecutor.executeAndConfirm(
+          transaction,
+          mainKp,
+          latestBlockhash
+        );
+
+        if (signature.confirmed) {
+          console.log("Transaction successfully created and simulated!");
+          // Return transaction details without executing
+          return res.json({
+            success: true,
+            signature: signature.signature,
+            mint: mintKp.publicKey.toBase58(),
+          });
+        } else {
+          console.error("Failed to create the token transaction.");
+          return res.status(500).json({
+            error: "Failed to create the token transaction.",
+          });
+        }
+      } else {
+        console.error("Failed to create the token transaction.");
+        return res.status(500).json({
+          error: "Failed to create the token transaction.",
+        });
+      }
     } catch (error: any) {
       const errorMessage =
         error instanceof Error ? error.message : "Server error";

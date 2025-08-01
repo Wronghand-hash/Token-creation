@@ -35,7 +35,6 @@ import { LaunchpadRequest } from "../types/types";
 
 dotenv.config();
 
-const JITO_FEE = 0.001;
 const BONK_PLATFROM_ID = new PublicKey(
   "FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1"
 );
@@ -45,11 +44,6 @@ const connection = new Connection(process.env.RPC_URL || "", {
   commitment,
 });
 
-const jitoExecutor = new JitoTransactionExecutor(
-  JITO_FEE.toString(),
-  connection,
-  process.env.JITO_RPC_URL || ""
-);
 
 const createImageMetadata = async (imageData: Buffer) => {
   const formData = new FormData();

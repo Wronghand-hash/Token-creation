@@ -27,6 +27,7 @@ export class TokenService {
   private readonly programId: PublicKey = new PublicKey(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
   );
+  private readonly provider: AnchorProvider;
   private readonly pinataService: PinataService;
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),

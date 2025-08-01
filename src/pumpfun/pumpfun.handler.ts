@@ -2,6 +2,7 @@ import express, { Request, Response, Router } from "express";
 import multer from "multer";
 import { TokenService } from "../pumpfun/tokenService";
 import { TokenCreationRequest } from "../pumpfun/types/types";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -24,6 +25,7 @@ router.post(
         tokenData.imageFileName = req.file.originalname;
       }
 
+      // Validate required fields
       if (
         !tokenData.name ||
         !tokenData.symbol ||
@@ -36,6 +38,7 @@ router.post(
         });
       }
 
+      // Validate string lengths
       if (tokenData.name.length > 32) {
         return res
           .status(400)
@@ -52,6 +55,21 @@ router.post(
         return res
           .status(400)
           .json({ error: "URI must be 200 characters or less" });
+      }
+
+      // Validate and convert buyAmount if provided
+      if (tokenData.buyAmount) {
+        const buyAmountNum = Number(tokenData.buyAmount);
+        if (isNaN(buyAmountNum) || buyAmountNum <= 0) {
+          return res
+            .status(400)
+            .json({ error: "buyAmount must be a positive number" });
+        }
+        // Convert SOL to lamports
+        tokenData.buyAmount = Math.floor(buyAmountNum * LAMPORTS_PER_SOL);
+        if (tokenData.buyAmount > Number.MAX_SAFE_INTEGER) {
+          return res.status(400).json({ error: "buyAmount is too large" });
+        }
       }
 
       const result = await tokenService.createPumpFunToken(tokenData);

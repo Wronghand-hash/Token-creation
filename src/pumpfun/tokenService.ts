@@ -12,7 +12,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
-import { AnchorProvider, utils, web3 } from "@coral-xyz/anchor";
+import { utils, web3 } from "@coral-xyz/anchor";
 import bs58 from "bs58";
 import { JitoBundler } from "../jito/jitoService";
 import { TokenCreationRequest } from "./types/types";
@@ -27,7 +27,6 @@ export class TokenService {
   private readonly programId: PublicKey = new PublicKey(
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
   );
-  private readonly provider: AnchorProvider;
   private readonly pinataService: PinataService;
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
@@ -50,20 +49,6 @@ export class TokenService {
     const rpcUrl = process.env.RPC_URL || "https://api.devnet.solana.com";
     this.connection = new Connection(rpcUrl, "confirmed");
     this.jitoBundler = new JitoBundler("1000000", this.connection);
-    const wallet = new web3.Keypair();
-    this.provider = new AnchorProvider(
-      this.connection,
-      {
-        publicKey: wallet.publicKey,
-        signTransaction: async () => {
-          throw new Error("Dummy wallet");
-        },
-        signAllTransactions: async () => {
-          throw new Error("Dummy wallet");
-        },
-      },
-      { commitment: "confirmed" }
-    );
     this.pinataService = new PinataService();
   }
 
@@ -77,18 +62,15 @@ export class TokenService {
       const latestBlockhash = await this.connection.getLatestBlockhash(
         "confirmed"
       );
-
       const pumpFunInstruction = await this.createPumpFunInstruction(
         tokenMint.publicKey,
         creatorKeypair.publicKey,
         { ...req, uri }
       );
-
       const transaction = new Transaction().add(pumpFunInstruction);
 
       // Add ATA creation and buy instruction if buyAmount is provided
       if (req.buyAmount && req.buyAmount > 0) {
-        const lamportsBuyAmount = req.buyAmount * LAMPORTS_PER_SOL;
         const associatedUser = await web3.PublicKey.findProgramAddressSync(
           [
             creatorKeypair.publicKey.toBuffer(),
@@ -99,9 +81,9 @@ export class TokenService {
         )[0];
 
         const createATAInstruction = createAssociatedTokenAccountInstruction(
-          creatorKeypair.publicKey, // Payer
-          associatedUser, // ATA
-          creatorKeypair.publicKey, // Owner
+          creatorKeypair.publicKey,
+          associatedUser,
+          creatorKeypair.publicKey,
           tokenMint.publicKey
         );
         transaction.add(createATAInstruction);
@@ -113,7 +95,7 @@ export class TokenService {
           bondingCurve,
           associatedBondingCurve,
           associatedUser,
-          lamportsBuyAmount
+          req.buyAmount
         );
         transaction.add(buyInstruction);
       }
@@ -121,9 +103,7 @@ export class TokenService {
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair);
-
       await this.simulateTransaction(transaction);
-
       return await this.submitTransaction(
         transaction,
         creatorKeypair,
@@ -171,7 +151,12 @@ export class TokenService {
     }
 
     if (req.buyAmount && (req.buyAmount <= 0 || isNaN(req.buyAmount))) {
-      throw new Error("buyAmount must be a positive number");
+      throw new Error("buyAmount must be a positive number in lamports");
+    }
+
+    // Add maximum buyAmount check to prevent overflow
+    if (req.buyAmount && req.buyAmount > Number.MAX_SAFE_INTEGER) {
+      throw new Error("buyAmount is too large");
     }
   }
 
@@ -234,7 +219,6 @@ export class TokenService {
         return { tokenMint, bondingCurve, associatedBondingCurve, metadata };
       }
     }
-
     throw new Error(
       "Failed to find unused mint, bonding curve, or metadata accounts after maximum attempts"
     );
@@ -287,6 +271,7 @@ export class TokenService {
             : "Jito bundler failed",
       };
     }
+
     if (!result.confirmed) {
       result = await this.fallbackDirectSubmission(
         transaction,
@@ -326,12 +311,10 @@ export class TokenService {
           transaction.recentBlockhash = newBlockhash.blockhash;
           transaction.sign(tokenMint, creatorKeypair);
         }
-
         const signature = await this.connection.sendRawTransaction(
           transaction.serialize()
         );
         console.log("Direct Transaction Signature:", signature);
-
         const confirmation = await this.connection.confirmTransaction(
           {
             signature,
@@ -344,7 +327,6 @@ export class TokenService {
           "Direct Confirmation:",
           JSON.stringify(confirmation, null, 2)
         );
-
         if (!confirmation.value.err) {
           return { confirmed: true, signature, error: undefined };
         } else {
@@ -371,7 +353,6 @@ export class TokenService {
         };
       }
     }
-
     return result;
   }
 
@@ -490,11 +471,11 @@ export class TokenService {
       "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
     );
 
-    // Convert buyAmount (lamports) to u64 buffer
+    // Ensure buyAmount is in lamports
     const amountBuffer = Buffer.alloc(8);
     amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
 
-    // Set max_sol_cost to a reasonable limit (buyAmount + 10% for fees)
+    // Set max_sol_cost to buyAmount + 10% for fees
     const maxSolCost = Math.floor(buyAmount * 1.1);
     const maxSolCostBuffer = Buffer.alloc(8);
     maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));

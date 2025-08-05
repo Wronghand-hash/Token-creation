@@ -11,18 +11,18 @@ interface PumpfunTokensAttributes {
   metadataUri: string;
   imageUri: string | null;
   description: string | null;
-  socialMedia: object | null; // e.g., { twitter: '...', telegram: '...' }
+  socialMedia: object | null;
   initialMarketCap: number | null;
   currentMarketCap: number | null;
-  initialSupply: number | null; // Changed to optional
-  currentSupply: number | null; // Changed to optional
+  initialSupply: number | null;
+  currentSupply: number | null;
   bondingCurveAddress: string;
   associatedBondingCurveAddress: string;
-  signature: string;
+  signature: string | null;
   createdAt: Date;
   updatedAt: Date;
   status: "bonding" | "graduated" | "failed";
-  initialBuyAmount: number | null; // The amount of SOL used in the initial buy
+  initialBuyAmount: number | null;
 }
 
 // Interface for creation attributes, with optional fields
@@ -35,10 +35,11 @@ interface PumpfunTokensCreationAttributes
     | "imageUri"
     | "description"
     | "socialMedia"
-    | "initialSupply" // Added to optional fields
-    | "currentSupply" // Added to optional fields
+    | "initialSupply"
+    | "currentSupply"
     | "initialBuyAmount"
     | "status"
+    | "signature"
   > {}
 
 class PumpfunTokens
@@ -56,15 +57,14 @@ class PumpfunTokens
   public socialMedia!: object | null;
   public initialMarketCap!: number | null;
   public currentMarketCap!: number | null;
-  public initialSupply!: number | null; // Changed to optional
-  public currentSupply!: number | null; // Changed to optional
+  public initialSupply!: number | null;
+  public currentSupply!: number | null;
   public bondingCurveAddress!: string;
   public associatedBondingCurveAddress!: string;
-  public signature!: string;
+  public signature!: string | null;
   public status!: "bonding" | "graduated" | "failed";
   public initialBuyAmount!: number | null;
 
-  // Timestamps
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
 }
@@ -127,12 +127,12 @@ PumpfunTokens.init(
       comment: "The current market cap of the token",
     },
     initialSupply: {
-      type: DataTypes.DECIMAL(20, 0), // Changed to optional
+      type: DataTypes.DECIMAL(20, 0),
       allowNull: true,
       comment: "The initial total supply of the token",
     },
     currentSupply: {
-      type: DataTypes.DECIMAL(20, 0), // Changed to optional, removed default
+      type: DataTypes.DECIMAL(20, 0),
       allowNull: true,
       comment: "The current total supply of the token",
     },
@@ -148,8 +148,7 @@ PumpfunTokens.init(
     },
     signature: {
       type: DataTypes.STRING(128),
-      allowNull: false,
-      unique: true,
+      allowNull: true,
       comment: "The transaction signature for the token creation",
     },
     status: {

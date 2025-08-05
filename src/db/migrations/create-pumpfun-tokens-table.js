@@ -82,8 +82,7 @@ module.exports = {
       },
       signature: {
         type: Sequelize.STRING(128),
-        allowNull: false,
-        unique: true,
+        allowNull: true,
         comment: "The transaction signature for the token creation",
       },
       status: {

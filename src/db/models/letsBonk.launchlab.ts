@@ -170,7 +170,6 @@ LaunchlabTokens.init(
     signature: {
       type: DataTypes.STRING(128),
       allowNull: true,
-      unique: true,
       comment: "The transaction signature for the token creation",
     },
     status: {

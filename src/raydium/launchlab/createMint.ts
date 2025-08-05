@@ -45,7 +45,7 @@ const connection = new Connection(process.env.RPC_URL || "", {
   commitment,
 });
 
-const createImageMetadata = async (imageData: Buffer) => {
+const createImageMetadata = async (imageData: any) => {
   const formData = new FormData();
   try {
     formData.append("image", new Blob([imageData]), "token-image.png");
@@ -286,9 +286,6 @@ export const createBonkTokenTx = async (
       JSON.stringify(sim, null, 2)
     );
 
-    // Extract signature after signing
-    const signature = Buffer.from(transaction.signatures[0]).toString("base64");
-
     // Store token data in the database
     await storeTokenData({
       tokenMint: mintKp.publicKey.toBase58(),
@@ -322,7 +319,7 @@ export const createBonkTokenTx = async (
           .publicKey,
         NATIVE_MINT
       ).publicKey.toBase58(),
-      signature,
+      signature: "",
       initialBuyAmount: tokenData.buyAmount
         ? tokenData.buyAmount * LAMPORTS_PER_SOL
         : null,

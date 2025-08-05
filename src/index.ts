@@ -6,6 +6,7 @@ import pumpfunRoutes from "./pumpfun/pumpfun.handler";
 import { Router } from "express";
 import launchlabRouter from "./raydium/router/launchlab.router";
 import { NextFunction, Request, Response } from "express";
+import { testConnection } from "./db/database";
 
 dotenv.config();
 
@@ -38,9 +39,26 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).send("Something broke!");
 });
 
-// --- Server Start ---
+// --- Server Startup Logic ---
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const startServer = async () => {
+  try {
+    const isConnected = await testConnection();
+
+    if (!isConnected) {
+      console.error("Database connection failed. Server will not start.");
+      process.exit(1); 
+    }
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+};
+
+// Call the async function to start the server
+startServer();

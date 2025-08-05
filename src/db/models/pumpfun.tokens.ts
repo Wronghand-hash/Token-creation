@@ -72,7 +72,7 @@ class PumpfunTokens
 PumpfunTokens.init(
   {
     id: {
-      type: DataTypes.INTEGER.UNSIGNED,
+      type: DataTypes.INTEGER,
       autoIncrement: true,
       primaryKey: true,
     },
@@ -160,7 +160,7 @@ PumpfunTokens.init(
         "The current status of the token (on bonding curve, graduated to DEX, or failed)",
     },
     initialBuyAmount: {
-      type: DataTypes.BIGINT.UNSIGNED,
+      type: DataTypes.BIGINT,
       allowNull: true,
       comment: "The amount of SOL in lamports used for the initial buy, if any",
     },

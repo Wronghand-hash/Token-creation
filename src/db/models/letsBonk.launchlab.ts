@@ -79,7 +79,7 @@ class LaunchlabTokens
 LaunchlabTokens.init(
   {
     id: {
-      type: DataTypes.INTEGER.UNSIGNED,
+      type: DataTypes.INTEGER,
       autoIncrement: true,
       primaryKey: true,
     },
@@ -181,7 +181,7 @@ LaunchlabTokens.init(
         "The current status of the token (active, migrated to AMM, or failed)",
     },
     initialBuyAmount: {
-      type: DataTypes.BIGINT.UNSIGNED,
+      type: DataTypes.BIGINT,
       allowNull: true,
       comment: "The amount of SOL in lamports used for the initial buy, if any",
     },

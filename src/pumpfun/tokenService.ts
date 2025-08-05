@@ -63,7 +63,7 @@ export class TokenService {
     this.connection = new Connection(rpcUrl, "confirmed");
     this.jitoBundler = new JitoBundler("1000000", this.connection);
     this.pinataService = new PinataService();
-    this.sequelize = require("../database").sequelize; // Assuming sequelize is exported from database.ts
+    this.sequelize = require("../db/database").sequelize; // Assuming sequelize is exported from database.ts
   }
 
   async createPumpFunToken(req: TokenCreationRequest) {

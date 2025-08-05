@@ -1,7 +1,6 @@
 import {
   Connection,
   Keypair,
-  LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
   Transaction,
@@ -15,11 +14,24 @@ import {
 import { utils, web3 } from "@coral-xyz/anchor";
 import bs58 from "bs58";
 import { JitoBundler } from "../jito/jitoService";
-import { TokenCreationRequest } from "./types/types";
 import dotenv from "dotenv";
 import { PinataService } from "../pinata/index";
+import PumpfunTokens from "../db/models/pumpfun.tokens";
 
 dotenv.config();
+
+// Define the TokenCreationRequest interface
+interface TokenCreationRequest {
+  name: string;
+  symbol: string;
+  creatorKeypair: string;
+  uri?: string;
+  imageBuffer?: Buffer;
+  external_url?: string;
+  buyAmount?: number;
+  description?: string; // Optional description
+  extensions?: { [key: string]: string } | null; // Optional social media links
+}
 
 export class TokenService {
   private readonly connection: Connection;
@@ -28,6 +40,7 @@ export class TokenService {
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
   );
   private readonly pinataService: PinataService;
+  private readonly sequelize: any; // Sequelize instance
   private readonly SEEDS = {
     MINT_AUTHORITY: utils.bytes.utf8.encode("mint-authority"),
     BONDING_CURVE: utils.bytes.utf8.encode("bonding-curve"),
@@ -50,6 +63,7 @@ export class TokenService {
     this.connection = new Connection(rpcUrl, "confirmed");
     this.jitoBundler = new JitoBundler("1000000", this.connection);
     this.pinataService = new PinataService();
+    this.sequelize = require("../database").sequelize; // Assuming sequelize is exported from database.ts
   }
 
   async createPumpFunToken(req: TokenCreationRequest) {
@@ -58,7 +72,7 @@ export class TokenService {
       const creatorKeypair = this.getCreatorKeypair(req.creatorKeypair);
       const { tokenMint, bondingCurve, associatedBondingCurve } =
         await this.findAvailableAccounts();
-      const uri = req.uri || (await this.pinataService.uploadMetadata(req));
+      const { uri, imageUrl } = await this.pinataService.uploadMetadata(req);
       const latestBlockhash = await this.connection.getLatestBlockhash(
         "confirmed"
       );
@@ -69,7 +83,6 @@ export class TokenService {
       );
       const transaction = new Transaction().add(pumpFunInstruction);
 
-      // Add ATA creation and buy instruction if buyAmount is provided
       if (req.buyAmount && req.buyAmount > 0) {
         const associatedUser = await web3.PublicKey.findProgramAddressSync(
           [
@@ -88,7 +101,6 @@ export class TokenService {
         );
         transaction.add(createATAInstruction);
 
-        // Add buy instruction
         const buyInstruction = await this.createBuyInstruction(
           tokenMint.publicKey,
           creatorKeypair.publicKey,
@@ -103,18 +115,106 @@ export class TokenService {
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair);
+      await this.storeTokenData({
+        ...req,
+        extensions: req.extensions || null,
+        name: req.name,
+        symbol: req.symbol,
+        creatorKeypair: req.creatorKeypair,
+        buyAmount: req.buyAmount,
+        tokenMint: tokenMint.publicKey.toBase58(),
+        image: imageUrl,
+        description: req.description || null,
+        bondingCurveAddress: bondingCurve.toBase58(),
+        associatedBondingCurveAddress: associatedBondingCurve.toBase58(),
+        signature: "",
+        uri,
+      });
       await this.simulateTransaction(transaction);
-      return await this.submitTransaction(
+      const result = await this.submitTransaction(
         transaction,
         creatorKeypair,
         latestBlockhash,
         tokenMint
       );
+
+      if (result.success && result.signature && result.mintAddress) {
+        // Store token data in the database
+        await this.storeTokenData({
+          ...req,
+          extensions: req.extensions || null,
+          name: req.name,
+          symbol: req.symbol,
+          creatorKeypair: req.creatorKeypair,
+          buyAmount: req.buyAmount,
+          tokenMint: result.mintAddress,
+          image: imageUrl,
+          description: req.description || null,
+          bondingCurveAddress: bondingCurve.toBase58(),
+          associatedBondingCurveAddress: associatedBondingCurve.toBase58(),
+          signature: result.signature,
+          uri,
+        });
+      }
+
+      return result;
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error",
       };
+    }
+  }
+
+  private async storeTokenData(data: {
+    name: string;
+    symbol: string;
+    creatorKeypair: string;
+    buyAmount?: number;
+    tokenMint: string;
+    uri: string;
+    image: string | undefined;
+    description: string | null;
+    bondingCurveAddress: string;
+    associatedBondingCurveAddress: string;
+    signature: string;
+    extensions: { [key: string]: string } | null;
+  }) {
+    try {
+      const STANDARD_INITIAL_SUPPLY = 1_000_000_000;
+
+      await PumpfunTokens.create({
+        tokenMint: data.tokenMint,
+        tokenName: data.name,
+        tokenSymbol: data.symbol,
+        creatorAddress: this.getCreatorKeypair(
+          data.creatorKeypair
+        ).publicKey.toBase58(),
+        metadataUri: data.uri,
+        imageUri: data.image || null,
+        description: data.description || null,
+        socialMedia: data.extensions || null,
+        initialMarketCap: null, // Not available
+        currentMarketCap: null, // Not available
+        initialSupply: STANDARD_INITIAL_SUPPLY, // Use standard value
+        currentSupply: STANDARD_INITIAL_SUPPLY, // Initially same as initialSupply
+        bondingCurveAddress: data.bondingCurveAddress,
+        associatedBondingCurveAddress: data.associatedBondingCurveAddress,
+        signature: data.signature,
+        status: "bonding", // Default status
+        initialBuyAmount: data.buyAmount || null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      console.log(`Token data stored for mint: ${data.tokenMint}`);
+    } catch (error) {
+      console.error("Failed to store token data:", error);
+      throw new Error(
+        `Failed to store token data: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
 
@@ -154,7 +254,6 @@ export class TokenService {
       throw new Error("buyAmount must be a positive number in lamports");
     }
 
-    // Add maximum buyAmount check to prevent overflow
     if (req.buyAmount && req.buyAmount > Number.MAX_SAFE_INTEGER) {
       throw new Error("buyAmount is too large");
     }
@@ -471,11 +570,9 @@ export class TokenService {
       "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
     );
 
-    // Ensure buyAmount is in lamports
     const amountBuffer = Buffer.alloc(8);
     amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
 
-    // Set max_sol_cost to buyAmount + 10% for fees
     const maxSolCost = Math.floor(buyAmount * 1.1);
     const maxSolCostBuffer = Buffer.alloc(8);
     maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));

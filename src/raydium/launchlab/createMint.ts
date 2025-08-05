@@ -32,6 +32,7 @@ import { initSdk } from "../config";
 import { JitoTransactionExecutor } from "./executer";
 import dotenv from "dotenv";
 import { LaunchpadRequest } from "../types/types";
+import LaunchlabTokens from "../../db/models/letsBonk.launchlab";
 
 dotenv.config();
 
@@ -43,7 +44,6 @@ const commitment = "confirmed";
 const connection = new Connection(process.env.RPC_URL || "", {
   commitment,
 });
-
 
 const createImageMetadata = async (imageData: Buffer) => {
   const formData = new FormData();
@@ -108,7 +108,6 @@ const createBonkTokenMetadata = async (create: any) => {
 export const createBonkFunTokenMetadata = async (
   tokenData: LaunchpadRequest
 ) => {
-  // Validate required fields
   if (!tokenData.name || !tokenData.symbol || !tokenData.image) {
     throw new Error(
       "Missing required fields: name, symbol, and image are required"
@@ -153,7 +152,7 @@ export const createBonkFunTokenMetadata = async (
 
   const tokenMetadata = await createBonkTokenMetadata(tokenInfo);
   console.log("tokenMetadata:", tokenMetadata);
-  return tokenMetadata;
+  return { uri: tokenMetadata, imageUrl: imageMetadata };
 };
 
 export const createBonkTokenTx = async (
@@ -163,7 +162,6 @@ export const createBonkTokenTx = async (
   tokenData: LaunchpadRequest
 ) => {
   try {
-    // Validate required fields
     if (!tokenData.name || !tokenData.symbol || !tokenData.image) {
       throw new Error(
         "Missing required fields: name, symbol, and image are required"
@@ -209,7 +207,7 @@ export const createBonkTokenTx = async (
       throw new Error("Invalid migrateType");
     }
 
-    const uri = await createBonkFunTokenMetadata(tokenData);
+    const { uri, imageUrl } = await createBonkFunTokenMetadata(tokenData);
     if (!uri) {
       throw new Error("Token metadata URI is undefined");
     }
@@ -260,7 +258,6 @@ export const createBonkTokenTx = async (
 
     const ixs = [...transactions[0].instructions];
 
-    // Only add buy instruction if buyAmount is provided
     if (tokenData.buyAmount && tokenData.buyAmount > 0) {
       const buyInstruction = await makeBuyIx(
         mainKp,
@@ -289,10 +286,111 @@ export const createBonkTokenTx = async (
       JSON.stringify(sim, null, 2)
     );
 
+    // Extract signature after signing
+    const signature = Buffer.from(transaction.signatures[0]).toString("base64");
+
+    // Store token data in the database
+    await storeTokenData({
+      tokenMint: mintKp.publicKey.toBase58(),
+      tokenName: tokenData.name,
+      tokenSymbol: tokenData.symbol,
+      creatorAddress: mainKp.publicKey.toBase58(),
+      metadataUri: uri,
+      imageUri: imageUrl,
+      description: tokenData.description || null,
+      socialMedia: {
+        website: tokenData.website || "https://bonk.fun",
+        twitter: tokenData.twitter || "https://x.com/bonkfun",
+        telegram: tokenData.telegram || "https://t.me/bonkfun",
+      },
+      platformId: tokenData.platformId || BONK_PLATFROM_ID.toBase58(),
+      configId: configId.toBase58(),
+      poolId: getPdaLaunchpadPoolId(
+        LAUNCHPAD_PROGRAM,
+        mintKp.publicKey,
+        NATIVE_MINT
+      ).publicKey.toBase58(),
+      vaultA: getPdaLaunchpadVaultId(
+        LAUNCHPAD_PROGRAM,
+        getPdaLaunchpadPoolId(LAUNCHPAD_PROGRAM, mintKp.publicKey, NATIVE_MINT)
+          .publicKey,
+        mintKp.publicKey
+      ).publicKey.toBase58(),
+      vaultB: getPdaLaunchpadVaultId(
+        LAUNCHPAD_PROGRAM,
+        getPdaLaunchpadPoolId(LAUNCHPAD_PROGRAM, mintKp.publicKey, NATIVE_MINT)
+          .publicKey,
+        NATIVE_MINT
+      ).publicKey.toBase58(),
+      signature,
+      initialBuyAmount: tokenData.buyAmount
+        ? tokenData.buyAmount * LAMPORTS_PER_SOL
+        : null,
+      decimals: tokenData.decimals || 6,
+    });
+
     return transaction;
   } catch (error) {
     console.error("createBonkTokenTx error:", error);
     throw error;
+  }
+};
+
+const storeTokenData = async (data: {
+  tokenMint: string;
+  tokenName: string;
+  tokenSymbol: string;
+  creatorAddress: string;
+  metadataUri: string;
+  imageUri: string;
+  description: string | null;
+  socialMedia: { website: string; twitter: string; telegram: string };
+  platformId: string;
+  configId: string;
+  poolId: string;
+  vaultA: string;
+  vaultB: string;
+  signature: string;
+  initialBuyAmount: number | null;
+  decimals: number;
+}) => {
+  try {
+    const STANDARD_INITIAL_SUPPLY = 1_000_000_000;
+
+    await LaunchlabTokens.create({
+      tokenMint: data.tokenMint,
+      tokenName: data.tokenName,
+      tokenSymbol: data.tokenSymbol,
+      creatorAddress: data.creatorAddress,
+      metadataUri: data.metadataUri,
+      imageUri: data.imageUri || null,
+      description: data.description || null,
+      socialMedia: data.socialMedia,
+      initialMarketCap: null,
+      currentMarketCap: null,
+      initialSupply: STANDARD_INITIAL_SUPPLY,
+      currentSupply: STANDARD_INITIAL_SUPPLY,
+      platformId: data.platformId,
+      configId: data.configId,
+      poolId: data.poolId,
+      vaultA: data.vaultA,
+      vaultB: data.vaultB,
+      signature: data.signature,
+      status: "active",
+      initialBuyAmount: data.initialBuyAmount,
+      decimals: data.decimals,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    console.log(`Token data stored for mint: ${data.tokenMint}`);
+  } catch (error) {
+    console.error("Failed to store token data:", error);
+    throw new Error(
+      `Failed to store token data: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
   }
 };
 
@@ -411,7 +509,7 @@ export const makeBuyIx = async (
     kp.publicKey,
     new BN(lamports),
     minmintAmount,
-    new BN(10000),
+    new BN(100),
     shareATA
   );
 

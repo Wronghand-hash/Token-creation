@@ -29,7 +29,7 @@ export class PinataService {
     return Keypair.fromSecretKey(secretKey);
   }
 
-  async uploadMetadata(req: any): Promise<string> {
+  async uploadMetadata(req: any): Promise<{ uri: string; imageUrl: string }> {
     if (!req.imageBuffer || !req.imageFileName) {
       throw new Error(
         "Image buffer and filename are required for metadata upload"
@@ -80,6 +80,9 @@ export class PinataService {
     const uri = `https://${process.env.PINATA_GATEWAY}/ipfs/${metadataUpload.cid}`;
     console.log("Generated Metadata URI:", uri);
 
-    return uri;
+    return {
+      uri,
+      imageUrl,
+    };
   }
 }

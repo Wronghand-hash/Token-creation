@@ -2,7 +2,10 @@ import express, { Request, Response, Router } from "express";
 import multer from "multer";
 import { Keypair, Connection, PublicKey } from "@solana/web3.js";
 import { BN } from "bn.js";
-import { createBonkTokenTx } from "../launchlab/createMint";
+import {
+  createBonkTokenTx,
+  updateTokenSignatureLaunchlab,
+} from "../launchlab/createMint";
 import { JitoTransactionExecutor } from "../launchlab/executer";
 import { LaunchpadRequest } from "../types/types";
 import { getCreatorKeypair } from "../../utils/helpers";
@@ -146,6 +149,12 @@ router.post(
         if (signature.confirmed) {
           console.log("Transaction successfully created and simulated!");
           // Return transaction details without executing
+          if (signature.signature) {
+            await updateTokenSignatureLaunchlab(
+              mintKp.publicKey.toBase58(),
+              signature.signature
+            );
+          }
           return res.json({
             success: true,
             signature: signature.signature,

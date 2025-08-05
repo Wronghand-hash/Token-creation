@@ -218,6 +218,35 @@ export class TokenService {
     }
   }
 
+  private async updateTokenSignaturePumpfun(
+    tokenMint: string,
+    signature: string
+  ) {
+    try {
+      await PumpfunTokens.update(
+        {
+          signature,
+        },
+        {
+          where: {
+            tokenMint,
+          },
+        }
+      );
+
+      console.log(
+        `creation signature update for toekn ${tokenMint}: ${signature}`
+      );
+    } catch (error) {
+      console.error("Failed to store token data:", error);
+      throw new Error(
+        `Failed to store token data: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
   private validateRequest(req: TokenCreationRequest): void {
     if (
       !req.name ||
@@ -356,6 +385,12 @@ export class TokenService {
         [tokenMint]
       );
       if (result.confirmed) {
+        if (result.signature) {
+          await this.updateTokenSignaturePumpfun(
+            tokenMint.publicKey.toBase58(),
+            result.signature
+          );
+        }
         console.log("Jito Transaction Signature:", result.signature);
       } else {
         console.log("Jito bundler failed:", result.error);

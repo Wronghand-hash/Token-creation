@@ -394,6 +394,34 @@ const storeTokenData = async (data: {
   }
 };
 
+export const updateTokenSignatureLaunchlab = async (
+  tokenMint: string,
+  signature: string
+) => {
+  try {
+    await LaunchlabTokens.update(
+      {
+        signature,
+      },
+      {
+        where: {
+          tokenMint,
+        },
+      }
+    );
+
+    console.log(
+      `creation signature update for toekn ${tokenMint}: ${signature}`
+    );
+  } catch (error) {
+    console.error("Failed to store token data:", error);
+    throw new Error(
+      `Failed to store token data: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+};
 export const makeBuyIx = async (
   kp: Keypair,
   buyAmount: number,

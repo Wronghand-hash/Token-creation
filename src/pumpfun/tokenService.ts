@@ -20,6 +20,8 @@ import PumpfunTokens from "../db/models/pumpfun.tokens";
 
 dotenv.config();
 
+const defaultDecimal = 6;
+
 // Define the TokenCreationRequest interface
 interface TokenCreationRequest {
   name: string;
@@ -169,6 +171,16 @@ export class TokenService {
     try {
       const STANDARD_INITIAL_SUPPLY = 1_000_000_000;
 
+      // Convert buyAmount to an integer, truncating any decimals
+      const buyAmountNum = data.buyAmount ? Number(data.buyAmount) : null;
+      if (buyAmountNum !== null && !Number.isFinite(buyAmountNum)) {
+        throw new Error(
+          `buyAmount must be a valid number, got ${data.buyAmount}`
+        );
+      }
+      const initialBuyAmount =
+        buyAmountNum !== null ? Math.floor(buyAmountNum) : null;
+
       await PumpfunTokens.create({
         tokenMint: data.tokenMint,
         tokenName: data.name,
@@ -188,7 +200,7 @@ export class TokenService {
         associatedBondingCurveAddress: data.associatedBondingCurveAddress,
         signature: data.signature,
         status: "bonding", // Default status
-        initialBuyAmount: data.buyAmount || null,
+        initialBuyAmount,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -592,10 +604,13 @@ export class TokenService {
         "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
       );
 
+      // Convert buyAmount from SOL to lamports (1 SOL = 1,000,000,000 lamports)
+      const lamports = buyAmount * Math.pow(10, defaultDecimal);
       const amountBuffer = Buffer.alloc(8);
-      amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
+      amountBuffer.writeBigUInt64LE(BigInt(lamports));
 
-      const maxSolCost = Math.floor(buyAmount * 1.1);
+      // maxSolCost is slightly higher than buyAmount to account for slippage (in lamports)
+      const maxSolCost = Math.floor(lamports * 1.1);
       const maxSolCostBuffer = Buffer.alloc(8);
       maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));
 
@@ -605,7 +620,7 @@ export class TokenService {
         maxSolCostBuffer,
       ]);
 
-      // First, derive the new PDAs based on the IDL
+      // Derive PDAs based on the IDL
       const globalVolumeAccumulator = web3.PublicKey.findProgramAddressSync(
         [utils.bytes.utf8.encode("global_volume_accumulator")],
         this.programId
@@ -616,7 +631,7 @@ export class TokenService {
         this.programId
       )[0];
 
-      // Then, construct the accounts list
+      // Construct the accounts list
       const accounts = [
         { pubkey: global, isSigner: false, isWritable: false }, // global
         { pubkey: feeRecipient, isSigner: false, isWritable: true }, // fee_recipient

@@ -246,7 +246,7 @@ export const createBonkTokenTx = async (
         ? new PublicKey(tokenData.platformId)
         : BONK_PLATFROM_ID,
       txVersion: TxVersion.LEGACY,
-      buyAmount: new BN(tokenData.buyAmount || 0),
+      buyAmount: new BN(1),
       feePayer: mainKp.publicKey,
       createOnly: true,
       extraSigners: [mintKp],

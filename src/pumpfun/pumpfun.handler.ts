@@ -66,7 +66,6 @@ router.post(
             .json({ error: "buyAmount must be a positive number" });
         }
         // Convert SOL to lamports
-        tokenData.buyAmount = Math.floor(buyAmountNum * LAMPORTS_PER_SOL);
         if (tokenData.buyAmount > Number.MAX_SAFE_INTEGER) {
           return res.status(400).json({ error: "buyAmount is too large" });
         }
@@ -82,6 +81,7 @@ router.post(
           .json({ error: result.error || "Token creation failed" });
       }
     } catch (error) {
+      console.error("Error creating token:", error);
       return res.status(500).json({
         error: error instanceof Error ? error.message : "Server error",
       });

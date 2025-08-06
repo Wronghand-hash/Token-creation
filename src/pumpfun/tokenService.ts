@@ -115,21 +115,7 @@ export class TokenService {
       transaction.feePayer = creatorKeypair.publicKey;
       transaction.recentBlockhash = latestBlockhash.blockhash;
       transaction.sign(tokenMint, creatorKeypair);
-      await this.storeTokenData({
-        ...req,
-        extensions: req.extensions || null,
-        name: req.name,
-        symbol: req.symbol,
-        creatorKeypair: req.creatorKeypair,
-        buyAmount: req.buyAmount,
-        tokenMint: tokenMint.publicKey.toBase58(),
-        image: imageUrl,
-        description: req.description || null,
-        bondingCurveAddress: bondingCurve.toBase58(),
-        associatedBondingCurveAddress: associatedBondingCurve.toBase58(),
-        signature: "",
-        uri,
-      });
+
       await this.simulateTransaction(transaction);
       const result = await this.submitTransaction(
         transaction,
@@ -588,51 +574,74 @@ export class TokenService {
     associatedUser: PublicKey,
     buyAmount: number
   ): Promise<TransactionInstruction> {
-    const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
-    const global = web3.PublicKey.findProgramAddressSync(
-      [this.SEEDS.GLOBAL],
-      this.programId
-    )[0];
-    const creatorVault = web3.PublicKey.findProgramAddressSync(
-      [this.SEEDS.CREATOR_VAULT, user.toBuffer()],
-      this.programId
-    )[0];
-    const eventAuthority = web3.PublicKey.findProgramAddressSync(
-      [this.SEEDS.EVENT_AUTHORITY],
-      this.programId
-    )[0];
-    const feeRecipient = new PublicKey(
-      "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
-    );
+    try {
+      const discriminator = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]);
+      const global = web3.PublicKey.findProgramAddressSync(
+        [this.SEEDS.GLOBAL],
+        this.programId
+      )[0];
+      const creatorVault = web3.PublicKey.findProgramAddressSync(
+        [this.SEEDS.CREATOR_VAULT, user.toBuffer()],
+        this.programId
+      )[0];
+      const eventAuthority = web3.PublicKey.findProgramAddressSync(
+        [this.SEEDS.EVENT_AUTHORITY],
+        this.programId
+      )[0];
+      const feeRecipient = new PublicKey(
+        "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM"
+      );
 
-    const amountBuffer = Buffer.alloc(8);
-    amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
+      const amountBuffer = Buffer.alloc(8);
+      amountBuffer.writeBigUInt64LE(BigInt(buyAmount));
 
-    const maxSolCost = Math.floor(buyAmount * 1.1);
-    const maxSolCostBuffer = Buffer.alloc(8);
-    maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));
+      const maxSolCost = Math.floor(buyAmount * 1.1);
+      const maxSolCostBuffer = Buffer.alloc(8);
+      maxSolCostBuffer.writeBigUInt64LE(BigInt(maxSolCost));
 
-    const data = Buffer.concat([discriminator, amountBuffer, maxSolCostBuffer]);
+      const data = Buffer.concat([
+        discriminator,
+        amountBuffer,
+        maxSolCostBuffer,
+      ]);
 
-    const accounts = [
-      { pubkey: global, isSigner: false, isWritable: false },
-      { pubkey: feeRecipient, isSigner: false, isWritable: true },
-      { pubkey: mint, isSigner: false, isWritable: false },
-      { pubkey: bondingCurve, isSigner: false, isWritable: true },
-      { pubkey: associatedBondingCurve, isSigner: false, isWritable: true },
-      { pubkey: associatedUser, isSigner: false, isWritable: true },
-      { pubkey: user, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-      { pubkey: creatorVault, isSigner: false, isWritable: true },
-      { pubkey: eventAuthority, isSigner: false, isWritable: false },
-      { pubkey: this.programId, isSigner: false, isWritable: false },
-    ];
+      // First, derive the new PDAs based on the IDL
+      const globalVolumeAccumulator = web3.PublicKey.findProgramAddressSync(
+        [utils.bytes.utf8.encode("global_volume_accumulator")],
+        this.programId
+      )[0];
 
-    return new TransactionInstruction({
-      keys: accounts,
-      programId: this.programId,
-      data,
-    });
+      const userVolumeAccumulator = web3.PublicKey.findProgramAddressSync(
+        [utils.bytes.utf8.encode("user_volume_accumulator"), user.toBuffer()],
+        this.programId
+      )[0];
+
+      // Then, construct the accounts list
+      const accounts = [
+        { pubkey: global, isSigner: false, isWritable: false }, // global
+        { pubkey: feeRecipient, isSigner: false, isWritable: true }, // fee_recipient
+        { pubkey: mint, isSigner: false, isWritable: false }, // mint
+        { pubkey: bondingCurve, isSigner: false, isWritable: true }, // bonding_curve
+        { pubkey: associatedBondingCurve, isSigner: false, isWritable: true }, // associated_bonding_curve
+        { pubkey: associatedUser, isSigner: false, isWritable: true }, // associated_user
+        { pubkey: user, isSigner: true, isWritable: true }, // user
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }, // token_program
+        { pubkey: creatorVault, isSigner: false, isWritable: true }, // creator_vault
+        { pubkey: eventAuthority, isSigner: false, isWritable: false }, // event_authority
+        { pubkey: this.programId, isSigner: false, isWritable: false }, // program
+        { pubkey: globalVolumeAccumulator, isSigner: false, isWritable: true }, // global_volume_accumulator
+        { pubkey: userVolumeAccumulator, isSigner: false, isWritable: true }, // user_volume_accumulator
+      ];
+
+      return new TransactionInstruction({
+        keys: accounts,
+        programId: this.programId,
+        data,
+      });
+    } catch (error) {
+      console.error("Error creating buy instruction:", error);
+      throw error;
+    }
   }
 }
